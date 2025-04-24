@@ -4,11 +4,12 @@ import numpy as np
 import torch
 from coqpit import Coqpit
 from torch import nn
-from torch.nn import functional
+from torch.nn import functional 
 
 from TTS.tts.utils.helpers import sequence_mask
 from TTS.tts.utils.ssim import SSIMLoss as _SSIMLoss
 from TTS.utils.audio.torch_transforms import TorchSTFT
+from TTS.tts.layers.soft_dtw import SoftDTW
 
 
 # pylint: disable=abstract-method
@@ -774,6 +775,51 @@ class VitsDiscriminatorLoss(nn.Module):
         for i, ldr in enumerate(loss_disc_real):
             return_dict[f"loss_disc_real_{i}"] = ldr
         return return_dict
+
+
+class NaturalspeechSoftDTWLoss(nn.Module):
+    def __init__(self,):
+        super().__init__()
+        self.sdtw = SoftDTW(use_cuda=False, gamma=0.1, warp=134.4)
+
+    def get_sdtw_kl_matrix(self, z_p, logs_q, m_p, logs_p):
+        """
+        returns kl matrix with shape [b, t_tp, t_tq]
+        z_p, logs_q: [b, h, t_tq]
+        m_p, logs_p: [b, h, t_tp]
+        """
+        z_p = z_p.float()
+        logs_q = logs_q.float()
+        m_p = m_p.float()
+        logs_p = logs_p.float()
+
+        t_tp, t_tq = m_p.size(-1), z_p.size(-1)
+        b, h, t_tp = m_p.shape
+        kls = torch.zeros((b, t_tp, t_tq), dtype=z_p.dtype, device=z_p.device)
+        for i in range(h):
+            logs_p_, m_p_, logs_q_, z_p_ = (
+                logs_p[:, i, :, None],
+                m_p[:, i, :, None],
+                logs_q[:, i, None, :],
+                z_p[:, i, None, :],
+            )
+            kl = logs_p_ - logs_q_ - 0.5  # [b, t_tp, t_tq]
+            kl += 0.5 * ((z_p_ - m_p_) ** 2) * torch.exp(-2.0 * logs_p_)
+            kls += kl
+        return kls
+
+    def forward(self, z_p, logs_q, m_p, logs_p, p_mask, q_mask):
+        INF = 1e5
+
+        kl = self.get_sdtw_kl_matrix(z_p, logs_q, m_p, logs_p)  # [b t_tp t_tq]
+        kl = functional.pad(kl, (0, 1, 0, 1), "constant", 0)
+        p_mask = functional.pad(p_mask, (0, 1), "constant", 0)
+        q_mask = functional.pad(q_mask, (0, 1), "constant", 0)
+
+        kl.masked_fill_(p_mask[:, :, None].bool() ^ q_mask[:, None, :].bool(), INF)
+        kl.masked_fill_((~p_mask[:, :, None].bool()) & (~q_mask[:, None, :].bool()), 0)
+        res = self.sdtw(kl).sum() / p_mask.sum()
+        return res
 
 
 class ForwardTTSLoss(nn.Module):

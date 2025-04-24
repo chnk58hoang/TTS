@@ -1,9 +1,7 @@
 import math
-
 import torch
 from torch import nn
 from torch.nn import functional as F
-
 from TTS.tts.layers.generic.normalization import LayerNorm, LayerNorm2
 
 
