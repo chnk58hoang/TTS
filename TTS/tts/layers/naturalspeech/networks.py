@@ -97,7 +97,8 @@ class LearnableUpsampling(nn.Module):
         self.linear_einsum = LinearNorm(dim_c * dim_w, d_predictor)  # A
         self.layer_norm = nn.LayerNorm(d_predictor)
 
-        self.proj_o = LinearNorm(192, 192 * 2)
+        self.proj_o = LinearNorm(d_predictor, d_predictor * 2)
+        self.d_predictor = d_predictor
 
     def forward(self, duration, V, src_len, src_mask, max_src_len):
 
