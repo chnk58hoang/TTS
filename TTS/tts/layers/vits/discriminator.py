@@ -68,7 +68,7 @@ class VitsDiscriminator(nn.Module):
         """
         Args:
             x (Tensor): ground truth waveform.
-            x_hat (Tensor): predicted waveform.
+            x_hat (Tensor): precdited waveform.
 
         Returns:
             List[Tensor]: discriminator scores.

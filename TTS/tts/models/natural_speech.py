@@ -353,6 +353,244 @@ class NaturalSpeechDataset(TTSDataset):
         }
 
 
+@dataclass
+class NaturalSpeechArgs(Coqpit):
+    """Natural speech model arguments.
+
+    Args:
+
+        num_chars (int):
+            Number of characters in the vocabulary. Defaults to 100.
+
+        out_channels (int):
+            Number of output channels of the decoder. Defaults to 513.
+
+        spec_segment_size (int):
+            Decoder input segment size. Defaults to 32 `(32 * hoplength = waveform length)`.
+
+        hidden_channels (int):
+            Number of hidden channels of the model. Defaults to 192.
+
+        hidden_channels_ffn_text_encoder (int):
+            Number of hidden channels of the feed-forward layers of the text encoder transformer. Defaults to 256.
+
+        num_heads_text_encoder (int):
+            Number of attention heads of the text encoder transformer. Defaults to 2.
+
+        num_layers_text_encoder (int):
+            Number of transformer layers in the text encoder. Defaults to 6.
+
+        kernel_size_text_encoder (int):
+            Kernel size of the text encoder transformer FFN layers. Defaults to 3.
+
+        dropout_p_text_encoder (float):
+            Dropout rate of the text encoder. Defaults to 0.1.
+
+        dropout_p_duration_predictor (float):
+            Dropout rate of the duration predictor. Defaults to 0.1.
+
+        kernel_size_posterior_encoder (int):
+            Kernel size of the posterior encoder's WaveNet layers. Defaults to 5.
+
+        dilatation_posterior_encoder (int):
+            Dilation rate of the posterior encoder's WaveNet layers. Defaults to 1.
+
+        num_layers_posterior_encoder (int):
+            Number of posterior encoder's WaveNet layers. Defaults to 16.
+
+        kernel_size_flow (int):
+            Kernel size of the Residual Coupling layers of the flow network. Defaults to 5.
+
+        dilatation_flow (int):
+            Dilation rate of the Residual Coupling WaveNet layers of the flow network. Defaults to 1.
+
+        num_layers_flow (int):
+            Number of Residual Coupling WaveNet layers of the flow network. Defaults to 6.
+
+        resblock_type_decoder (str):
+            Type of the residual block in the decoder network. Defaults to "1".
+
+        resblock_kernel_sizes_decoder (List[int]):
+            Kernel sizes of the residual blocks in the decoder network. Defaults to `[3, 7, 11]`.
+
+        resblock_dilation_sizes_decoder (List[List[int]]):
+            Dilation sizes of the residual blocks in the decoder network. Defaults to `[[1, 3, 5], [1, 3, 5], [1, 3, 5]]`.
+
+        upsample_rates_decoder (List[int]):
+            Upsampling rates for each concecutive upsampling layer in the decoder network. The multiply of these
+            values must be equal to the kop length used for computing spectrograms. Defaults to `[8, 8, 2, 2]`.
+
+        upsample_initial_channel_decoder (int):
+            Number of hidden channels of the first upsampling convolution layer of the decoder network. Defaults to 512.
+
+        upsample_kernel_sizes_decoder (List[int]):
+            Kernel sizes for each upsampling layer of the decoder network. Defaults to `[16, 16, 4, 4]`.
+
+        periods_multi_period_discriminator (List[int]):
+            Periods values for Vits Multi-Period Discriminator. Defaults to `[2, 3, 5, 7, 11]`.
+
+        use_sdp (bool):
+            Use Stochastic Duration Predictor. Defaults to True.
+
+        noise_scale (float):
+            Noise scale used for the sample noise tensor in training. Defaults to 1.0.
+
+        inference_noise_scale (float):
+            Noise scale used for the sample noise tensor in inference. Defaults to 0.667.
+
+        length_scale (float):
+            Scale factor for the predicted duration values. Smaller values result faster speech. Defaults to 1.
+
+        noise_scale_dp (float):
+            Noise scale used by the Stochastic Duration Predictor sample noise in training. Defaults to 1.0.
+
+        inference_noise_scale_dp (float):
+            Noise scale for the Stochastic Duration Predictor in inference. Defaults to 0.8.
+
+        max_inference_len (int):
+            Maximum inference length to limit the memory use. Defaults to None.
+
+        init_discriminator (bool):
+            Initialize the disciminator network if set True. Set False for inference. Defaults to True.
+
+        use_spectral_norm_disriminator (bool):
+            Use spectral normalization over weight norm in the discriminator. Defaults to False.
+
+        use_speaker_embedding (bool):
+            Enable/Disable speaker embedding for multi-speaker models. Defaults to False.
+
+        num_speakers (int):
+            Number of speakers for the speaker embedding layer. Defaults to 0.
+
+        speakers_file (str):
+            Path to the speaker mapping file for the Speaker Manager. Defaults to None.
+
+        speaker_embedding_channels (int):
+            Number of speaker embedding channels. Defaults to 256.
+
+        use_d_vector_file (bool):
+            Enable/Disable the use of d-vectors for multi-speaker training. Defaults to False.
+
+        d_vector_file (List[str]):
+            List of paths to the files including pre-computed speaker embeddings. Defaults to None.
+
+        d_vector_dim (int):
+            Number of d-vector channels. Defaults to 0.
+
+        detach_dp_input (bool):
+            Detach duration predictor's input from the network for stopping the gradients. Defaults to True.
+
+        use_language_embedding (bool):
+            Enable/Disable language embedding for multilingual models. Defaults to False.
+
+        embedded_language_dim (int):
+            Number of language embedding channels. Defaults to 4.
+
+        num_languages (int):
+            Number of languages for the language embedding layer. Defaults to 0.
+
+        language_ids_file (str):
+            Path to the language mapping file for the Language Manager. Defaults to None.
+
+        use_speaker_encoder_as_loss (bool):
+            Enable/Disable Speaker Consistency Loss (SCL). Defaults to False.
+
+        speaker_encoder_config_path (str):
+            Path to the file speaker encoder config file, to use for SCL. Defaults to "".
+
+        speaker_encoder_model_path (str):
+            Path to the file speaker encoder checkpoint file, to use for SCL. Defaults to "".
+
+        condition_dp_on_speaker (bool):
+            Condition the duration predictor on the speaker embedding. Defaults to True.
+
+        freeze_encoder (bool):
+            Freeze the encoder weigths during training. Defaults to False.
+
+        freeze_DP (bool):
+            Freeze the duration predictor weigths during training. Defaults to False.
+
+        freeze_PE (bool):
+            Freeze the posterior encoder weigths during training. Defaults to False.
+
+        freeze_flow_encoder (bool):
+            Freeze the flow encoder weigths during training. Defaults to False.
+
+        freeze_waveform_decoder (bool):
+            Freeze the waveform decoder weigths during training. Defaults to False.
+
+        encoder_sample_rate (int):
+            If not None this sample rate will be used for training the Posterior Encoder,
+            flow, text_encoder and duration predictor. The decoder part (vocoder) will be
+            trained with the `config.audio.sample_rate`. Defaults to None.
+
+        interpolate_z (bool):
+            If `encoder_sample_rate` not None and  this parameter True the nearest interpolation
+            will be used to upsampling the latent variable z with the sampling rate `encoder_sample_rate`
+            to the `config.audio.sample_rate`. If it is False you will need to add extra
+            `upsample_rates_decoder` to match the shape. Defaults to True.
+
+    """
+
+    num_chars: int = 100
+    out_channels: int = 513
+    spec_segment_size: int = 32
+    hidden_channels: int = 192
+    hidden_channels_ffn_text_encoder: int = 768
+    num_heads_text_encoder: int = 2
+    num_layers_text_encoder: int = 6
+    kernel_size_text_encoder: int = 3
+    dropout_p_text_encoder: float = 0.1
+    dropout_p_duration_predictor: float = 0.5
+    kernel_size_posterior_encoder: int = 5
+    dilation_rate_posterior_encoder: int = 1
+    num_layers_posterior_encoder: int = 16
+    kernel_size_flow: int = 5
+    dilation_rate_flow: int = 1
+    num_layers_flow: int = 4
+    resblock_type_decoder: str = "1"
+    resblock_kernel_sizes_decoder: List[int] = field(default_factory=lambda: [3, 7, 11])
+    resblock_dilation_sizes_decoder: List[List[int]] = field(default_factory=lambda: [[1, 3, 5], [1, 3, 5], [1, 3, 5]])
+    upsample_rates_decoder: List[int] = field(default_factory=lambda: [8, 8, 2, 2])
+    upsample_initial_channel_decoder: int = 512
+    upsample_kernel_sizes_decoder: List[int] = field(default_factory=lambda: [16, 16, 4, 4])
+    periods_multi_period_discriminator: List[int] = field(default_factory=lambda: [2, 3, 5, 7, 11])
+    use_sdp: bool = True
+    noise_scale: float = 1.0
+    inference_noise_scale: float = 0.667
+    length_scale: float = 1
+    noise_scale_dp: float = 1.0
+    inference_noise_scale_dp: float = 1.0
+    max_inference_len: int = None
+    init_discriminator: bool = True
+    use_spectral_norm_disriminator: bool = False
+    use_speaker_embedding: bool = False
+    num_speakers: int = 0
+    speakers_file: str = None
+    d_vector_file: List[str] = None
+    speaker_embedding_channels: int = 256
+    use_d_vector_file: bool = False
+    d_vector_dim: int = 0
+    detach_dp_input: bool = True
+    use_language_embedding: bool = False
+    embedded_language_dim: int = 4
+    num_languages: int = 0
+    language_ids_file: str = None
+    use_speaker_encoder_as_loss: bool = False
+    speaker_encoder_config_path: str = ""
+    speaker_encoder_model_path: str = ""
+    condition_dp_on_speaker: bool = True
+    freeze_encoder: bool = False
+    freeze_DP: bool = False
+    freeze_PE: bool = False
+    freeze_flow_decoder: bool = False
+    freeze_waveform_decoder: bool = False
+    encoder_sample_rate: int = None
+    interpolate_z: bool = True
+    reinit_DP: bool = False
+    reinit_text_encoder: bool = False
+
+
 class NaturalSpeech(BaseTTS):
     def __init__(self,
                  config: Coqpit,
@@ -366,6 +604,7 @@ class NaturalSpeech(BaseTTS):
         self.init_upsampling(config)
         self.spec_segment_size = self.config.audio.spec_segment_size
         self.use_gt_duration = self.config.models.use_gt_duration
+        self.use_sdtw = self.config.models.use_sdtw
 
         self.text_encoder = TextEncoder(n_vocab=self.args.num_chars,
                                         out_channels=self.args.hidden_channels,
@@ -397,7 +636,7 @@ class NaturalSpeech(BaseTTS):
                                                         conv_output_size=self.args.lu_conv_output_size,
                                                         dim_w=self.args.lu_dim_w,
                                                         dim_c=self.args.lu_dim_c,
-                                                        max_seq_len=self.lu_max_seq_len)
+                                                        max_seq_len=self.args.lu_max_seq_len)
 
         self.flow = ResidualCouplingBlocks(
             channels=self.args.hidden_channels,
@@ -633,6 +872,7 @@ class NaturalSpeech(BaseTTS):
         x_lengths: torch.tensor,
         y: torch.tensor,
         y_lengths: torch.tensor,
+        waveform: torch.tensor,
         aux_input={"d_vectors": None, "speaker_ids": None, "language_ids": None},
     ) -> Dict:
         """Forward pass of the model.
@@ -676,6 +916,12 @@ class NaturalSpeech(BaseTTS):
         z, m_q, logs_q, y_mask = self.posterior_encoder(y, y_lengths, g=g)
         # random segment
         z_slice, slice_ids = z_slice, slice_ids = rand_segments(z, y_lengths, self.spec_segment_size, let_short_samples=True, pad_short=True)
+        # get the coresponding waveform slices
+        gt_seg = segment(waveform,
+                         segment_indices=slice_ids * self.config.audio.hop_length,
+                         segment_size=self.spec_segment_size * self.config.audio.hop_length,
+                         pad_short=True,
+                         )
         # waveform decoder from posterior representation
         o = self.waveform_decoder(z_slice, g=g)  # [b, 1, t]
         # flow for posterior
@@ -708,13 +954,19 @@ class NaturalSpeech(BaseTTS):
         z_q_lengths = p_mask.flatten(1, -1).sum(dim=-1).long()
         z_slice_q, slice_ids_q = rand_segments(z_q, torch.minimum(z_q_lengths, y_lengths),
                                                self.spec_segment_size, let_short_samples=True, pad_short=True)
-        
+
         o2 = self.waveform_decoder(z_slice_q, g=g)
+        # get the coresponding waveform slices
+        gt_seg_2 = segment(waveform,
+                           segment_indices=slice_ids_q * self.config.audio.hop_length,
+                           segment_size=self.spec_segment_size * self.config.audio.hop_length,
+                           pad_short=True,)
         outputs.update(
             {
-                "o": o,
-                "duration_loss": duration_loss,
-                "slice_ids": slice_ids,
+                "o": o,  # predicted waveform [b, 1, t] from posterior
+                "gt_seg": gt_seg,  # ground truth waveform segments corresponding to o
+                "duration_loss": duration_loss,  # duration loss
+                "slice_ids": slice_ids,  # posterior slice ids
                 "x_mask": x_mask,
                 "y_mask": y_mask,
                 "z": z,
@@ -725,10 +977,11 @@ class NaturalSpeech(BaseTTS):
                 "logs_q": logs_q,
                 "p_mask": p_mask,
                 "W": W,
-                "o2": o2,
+                "o2": o2,  # predicted waveform e2e (text -> duration -> upsample -> flow -> decoder)
+                "gt_seg_2": gt_seg_2,  # ground truth waveform segments corresponding to o2
                 "z_q": z_q,
                 "gt_d": gt_d,
-                "slice_ids_q": slice_ids_q,
+                "slice_ids_q": slice_ids_q,  # slice ids from upsamled phoneme representation
             }
         )
         return outputs
@@ -791,12 +1044,11 @@ class NaturalSpeech(BaseTTS):
         """
 
         spec_lens = batch["spec_lens"]
-
+        # Discriminator
         if optimizer_idx == 0:
             tokens = batch["tokens"]
             token_lenghts = batch["token_lens"]
             spec = batch["spec"]
-
             d_vectors = batch["d_vectors"]
             speaker_ids = batch["speaker_ids"]
             language_ids = batch["language_ids"]
@@ -815,22 +1067,28 @@ class NaturalSpeech(BaseTTS):
             # cache tensors for the generator pass
             self.model_outputs_cache = outputs  # pylint: disable=attribute-defined-outside-init
 
-            # compute scores and features
+            # compute scores and features for posterior waveform outputs
             scores_disc_fake, _, scores_disc_real, _ = self.disc(
-                outputs["model_outputs"].detach(), outputs["waveform_seg"]
+                outputs["gt_seg"], outputs["o"].detach()
+            )
+            # compute scores and features for e2e waveform outputs
+            scores_disc_fake_e2e, _, scores_disc_real_e2e, _ = self.disc(
+                outputs["gt_seg_2"], outputs["o2"].detach()
             )
 
-            # compute loss
+            # compute discriminator loss for posterior
             with autocast(enabled=False):  # use float32 for the criterion
                 loss_dict = criterion[optimizer_idx](
                     scores_disc_real,
                     scores_disc_fake,
+                    scores_disc_real_e2e,
+                    scores_disc_fake_e2e
                 )
-            return outputs, loss_dict
 
+            return outputs, loss_dict
+        # Generator
         if optimizer_idx == 1:
             mel = batch["mel"]
-
             # compute melspec segment
             with autocast(enabled=False):
                 if self.args.encoder_sample_rate:
@@ -842,7 +1100,7 @@ class NaturalSpeech(BaseTTS):
                     mel.float(), self.model_outputs_cache["slice_ids"], spec_segment_size, pad_short=True
                 )
                 mel_slice_hat = wav_to_mel(
-                    y=self.model_outputs_cache["model_outputs"].float(),
+                    y=self.model_outputs_cache["o"].float(),
                     n_fft=self.config.audio.fft_size,
                     sample_rate=self.config.audio.sample_rate,
                     num_mels=self.config.audio.num_mels,
@@ -855,7 +1113,11 @@ class NaturalSpeech(BaseTTS):
 
             # compute discriminator scores and features
             scores_disc_fake, feats_disc_fake, _, feats_disc_real = self.disc(
-                self.model_outputs_cache["model_outputs"], self.model_outputs_cache["waveform_seg"]
+                self.model_outputs_cache["gt_seg"], self.model_outputs_cache["o"]
+            )
+
+            scores_disc_fake_e2e, _, _, _ = self.disc(
+                outputs["gt_seg_2"], outputs["o2"].detach()
             )
 
             # compute losses
@@ -864,17 +1126,23 @@ class NaturalSpeech(BaseTTS):
                     mel_slice_hat=mel_slice.float(),
                     mel_slice=mel_slice_hat.float(),
                     z_p=self.model_outputs_cache["z_p"].float(),
+                    z_q=self.model_outputs_cache["z_q"].float(),
+                    logs_p=self.model_outputs_cache["logs_p"].float(),
                     logs_q=self.model_outputs_cache["logs_q"].float(),
                     m_p=self.model_outputs_cache["m_p"].float(),
+                    m_q=self.model_outputs_cache["m_q"].float(),
                     logs_p=self.model_outputs_cache["logs_p"].float(),
                     z_len=spec_lens,
+                    p_mask=self.model_outputs_cache["p_mask"].float(),
                     scores_disc_fake=scores_disc_fake,
                     feats_disc_fake=feats_disc_fake,
                     feats_disc_real=feats_disc_real,
-                    loss_duration=self.model_outputs_cache["loss_duration"],
+                    scores_dics_fake_e2e=scores_disc_fake_e2e,
+                    loss_duration=self.model_outputs_cache["duration_loss"],
                     use_speaker_encoder_as_loss=self.args.use_speaker_encoder_as_loss,
                     gt_spk_emb=self.model_outputs_cache["gt_spk_emb"],
                     syn_spk_emb=self.model_outputs_cache["syn_spk_emb"],
+                    use_sdtw=self.use_sdtw
                 )
 
             return self.model_outputs_cache, loss_dict
@@ -1206,9 +1474,9 @@ class NaturalSpeech(BaseTTS):
         Returns:
             List: optimizers.
         """
-        # select generator parameters
         optimizer0 = get_optimizer(self.config.optimizer, self.config.optimizer_params, self.config.lr_disc, self.disc)
 
+        # select generator parameters
         gen_parameters = chain(params for k, params in self.named_parameters() if not k.startswith("disc."))
         optimizer1 = get_optimizer(
             self.config.optimizer, self.config.optimizer_params, self.config.lr_gen, parameters=gen_parameters
@@ -1240,11 +1508,11 @@ class NaturalSpeech(BaseTTS):
         """Get criterions for each optimizer. The index in the output list matches the optimizer idx used in
         `train_step()`"""
         from TTS.tts.layers.losses import (  # pylint: disable=import-outside-toplevel
-            VitsDiscriminatorLoss,
-            VitsGeneratorLoss,
+            NaturalSpeechDiscriminatorLoss,
+            NaturalSpeechGeneratorLoss,
         )
 
-        return [VitsDiscriminatorLoss(self.config), VitsGeneratorLoss(self.config)]
+        return [NaturalSpeechDiscriminatorLoss(self.config), NaturalSpeechGeneratorLoss(self.config)]
 
     def load_checkpoint(
         self, config, checkpoint_path, eval=False, strict=True, cache=False
@@ -1352,7 +1620,7 @@ class NaturalSpeech(BaseTTS):
             speaker_manager.init_encoder(
                 config.model_args.speaker_encoder_model_path, config.model_args.speaker_encoder_config_path
             )
-        return Vits(new_config, ap, tokenizer, speaker_manager, language_manager)
+        return NaturalSpeech(new_config, ap, tokenizer, speaker_manager, language_manager)
 
     def export_onnx(self, output_path: str = "coqui_vits.onnx", verbose: bool = True):
         """Export model to ONNX format for inference
