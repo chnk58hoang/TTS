@@ -33,7 +33,7 @@ def build_characters(graphemes: str = None,
 
 def get_configs(args):
     # dataset config
-    dataset_config = BaseDatasetConfig(formatter='speakers_101',
+    dataset_config = BaseDatasetConfig(formatter=args.formatter,
                                        meta_file_train=args.meta_file_train,
                                        language='vi',
                                        path=args.dataset_path)
@@ -47,7 +47,7 @@ def get_configs(args):
                                             mel_fmax=None)
 
     # model args
-    ns_args = NaturalSpeechArgs(use_speaker_embedding=True,)
+    ns_args = NaturalSpeechArgs()
 
     # model config
     model_config = NaturalSpeechConfig(
@@ -124,6 +124,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset directory")
     parser.add_argument("--meta_file_train", type=str, required=True,
                         default='metadata.txt', help="Path to the meta file for training")
+    parser.add_argument("--formatter", type=str, default="ns_female", help="dataset formatter")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
     parser.add_argument("--eval_batch_size", type=int, default=16, help="Batch size for evaluation")
     parser.add_argument("--batch_group_size", type=int, default=16,

@@ -148,11 +148,9 @@ class NaturalSpeechConfig(BaseTTSConfig):
     # testing
     test_sentences: List[List] = field(
         default_factory=lambda: [
-            ["It took me quite a long time to develop a voice, and now that I have it I'm not going to be silent."],
-            ["Be a voice, not an echo."],
-            ["I'm sorry Dave. I'm afraid I can't do that."],
-            ["This cake is great. It's so delicious and moist."],
-            ["Prior to November 22, 1963."],
+            ["Cố ý mở rộng tuyến đường di chuyển mỗi ngày."],
+            ["Hỏi thăm những người bạn không quen xem ngày hôm nay của họ thế nào."],
+            ["Đừng xem một lời từ chối từ một người phụ nữ là bằng chứng rằng bạn là kẻ thất bại và sẽ không bao giờ tìm được tình yêu"]
         ]
     )
 
