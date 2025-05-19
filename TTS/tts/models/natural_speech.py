@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torchaudio
+import json
 from coqpit import Coqpit
 from librosa.filters import mel as librosa_mel_fn
 from torch import nn
@@ -23,14 +24,14 @@ from TTS.tts.datasets.dataset import TTSDataset, _parse_sample
 from TTS.tts.layers.vits.discriminator import VitsDiscriminator
 from TTS.tts.layers.naturalspeech.networks import (DurationPredictor, LearnableUpsampling,
                                                    TextEncoder, ResidualCouplingBlocks,
-                                                   PosteriorEncoder, VAEMemoryBank)
+                                                   PosteriorEncoder)
 from TTS.tts.models.base_tts import BaseTTS
 from TTS.tts.utils.fairseq import rehash_fairseq_vits_checkpoint
 from TTS.tts.utils.helpers import generate_path, maximum_path, rand_segments, segment, sequence_mask
 from TTS.tts.utils.languages import LanguageManager
 from TTS.tts.utils.speakers import SpeakerManager
 from TTS.tts.utils.synthesis import synthesis
-from TTS.tts.utils.text.characters import BaseCharacters, BaseVocabulary, _characters, _pad, _phonemes, _punctuations
+from TTS.tts.utils.text.characters import BaseCharacters, BaseVocabulary, _characters, _pad, _phonemes, _punctuations, _eos, _bos
 from TTS.tts.utils.text.tokenizer import TTSTokenizer
 from TTS.tts.utils.visual import plot_alignment
 from TTS.utils.io import load_fsspec
@@ -529,6 +530,25 @@ class NaturalSpeechArgs(Coqpit):
             will be used to upsampling the latent variable z with the sampling rate `encoder_sample_rate`
             to the `config.audio.sample_rate`. If it is False you will need to add extra
             `upsample_rates_decoder` to match the shape. Defaults to True.
+        dp_kernel_size (int):
+            Kernel size of the duration predictor. Defaults to 3.
+        dropout_dp (float):
+            Dropout rate of the duration predictor. Defaults to 0.5.
+        d_predictor (int):
+            predictor dim of learnable upsampling. Defaults to 192
+        lu_kernel_size (int):
+            kernel size of learnable upsampling. Defaults to 3.
+        dropout_lu (float):
+            Dropout rate of the learnable upsampling. Defaults to 0.5.
+        lu_conv_output_size (int):
+            output size of the learnable upsampling. Defaults to 8.
+        lu_dim_w (int):
+            dim_w of the learnable upsampling. Defaults to 4.
+        lu_dim_c (int):
+            dim_c of the learnable upsampling. Defaults to 2.
+        lu_max_seq_len (int):
+            max_seq_len of the learnable upsampling. Defaults to 1000.
+
 
     """
 
@@ -589,6 +609,15 @@ class NaturalSpeechArgs(Coqpit):
     interpolate_z: bool = True
     reinit_DP: bool = False
     reinit_text_encoder: bool = False
+    dp_kernel_size: int = 3
+    dropout_dp: float = 0.5
+    d_predictor: int = 192
+    lu_kernel_size: int = 3
+    dropout_lu: float = 0.0
+    lu_conv_output_size: int = 8
+    lu_dim_w: int = 4
+    lu_dim_c: int = 2
+    lu_max_seq_len: int = 1000
 
 
 class NaturalSpeech(BaseTTS):
@@ -602,7 +631,6 @@ class NaturalSpeech(BaseTTS):
         self.init_multispeaker(config)
         self.init_multilingual(config)
         self.init_upsampling(config)
-        self.spec_segment_size = self.config.audio.spec_segment_size
         self.use_gt_duration = self.config.models.use_gt_duration
         self.use_sdtw = self.config.models.use_sdtw
 
@@ -915,11 +943,11 @@ class NaturalSpeech(BaseTTS):
         # posterior encoder
         z, m_q, logs_q, y_mask = self.posterior_encoder(y, y_lengths, g=g)
         # random segment
-        z_slice, slice_ids = z_slice, slice_ids = rand_segments(z, y_lengths, self.spec_segment_size, let_short_samples=True, pad_short=True)
+        z_slice, slice_ids = z_slice, slice_ids = rand_segments(z, y_lengths, self.args.spec_segment_size, let_short_samples=True, pad_short=True)
         # get the coresponding waveform slices
         gt_seg = segment(waveform,
                          segment_indices=slice_ids * self.config.audio.hop_length,
-                         segment_size=self.spec_segment_size * self.config.audio.hop_length,
+                         segment_size=self.args.spec_segment_size * self.config.audio.hop_length,
                          pad_short=True,
                          )
         # waveform decoder from posterior representation
@@ -949,17 +977,17 @@ class NaturalSpeech(BaseTTS):
         # split
         m_p, logs_p = torch.split(up_rep.transpose(1, 2), self.learnable_upsampling.d_predictor, dim=1)
         z_q = m_p + torch.randn_like(m_p) * torch.exp(logs_p)  # [b, d, t]
-        # flow for up sampled, phoneme rep
+        # flow for up sampled phoneme rep
         z_q = self.flow(z_q, p_mask.unsqueeze(1), g=g, reverse=True)
         z_q_lengths = p_mask.flatten(1, -1).sum(dim=-1).long()
         z_slice_q, slice_ids_q = rand_segments(z_q, torch.minimum(z_q_lengths, y_lengths),
-                                               self.spec_segment_size, let_short_samples=True, pad_short=True)
+                                               self.args.spec_segment_size, let_short_samples=True, pad_short=True)
 
         o2 = self.waveform_decoder(z_slice_q, g=g)
         # get the coresponding waveform slices
         gt_seg_2 = segment(waveform,
                            segment_indices=slice_ids_q * self.config.audio.hop_length,
-                           segment_size=self.spec_segment_size * self.config.audio.hop_length,
+                           segment_size=self.args.spec_segment_size * self.config.audio.hop_length,
                            pad_short=True,)
         outputs.update(
             {
@@ -1030,7 +1058,7 @@ class NaturalSpeech(BaseTTS):
             "logs_p": logs_p
         }
         return outputs
-    
+
     def train_step(self, batch: dict, criterion: nn.Module, optimizer_idx: int) -> Tuple[Dict, Dict]:
         """Perform a single training step. Run the model forward pass and compute losses.
 
@@ -1092,9 +1120,9 @@ class NaturalSpeech(BaseTTS):
             # compute melspec segment
             with autocast(enabled=False):
                 if self.args.encoder_sample_rate:
-                    spec_segment_size = self.spec_segment_size * int(self.interpolate_factor)
+                    spec_segment_size = self.args.spec_segment_size * int(self.interpolate_factor)
                 else:
-                    spec_segment_size = self.spec_segment_size
+                    spec_segment_size = self.args.spec_segment_size
 
                 mel_slice = segment(
                     mel.float(), self.model_outputs_cache["slice_ids"], spec_segment_size, pad_short=True
@@ -1414,7 +1442,7 @@ class NaturalSpeech(BaseTTS):
             loader = None
         else:
             # init dataloader
-            dataset = VitsDataset(
+            dataset = NaturalSpeechDataset(
                 model_args=self.args,
                 samples=samples,
                 batch_group_size=0 if is_eval else config.batch_group_size * config.batch_size,
@@ -1743,3 +1771,68 @@ class NaturalSpeech(BaseTTS):
             input_params,
         )
         return audio[0][0]
+
+
+def create_phonemes_list(dict_phonemes_json: str) -> List[str]:
+    dict_phoneme = json.load(open(dict_phonemes_json, "r", encoding="utf-8"))
+    all_phonemes = []
+    for key, values in dict_phoneme.items():
+        phonemes = values.split(" ")
+        for phoneme in phonemes:
+            if phoneme not in all_phonemes:
+                all_phonemes.append(phoneme)
+    return sorted(all_phonemes)
+
+
+class NaturalSpeechCharacters(BaseCharacters):
+    """Characters class for VITs model for compatibility with pre-trained models"""
+
+    def __init__(
+        self,
+        graphemes: str = None,
+        dict_phonemes_json: str = None,
+        punctuations: str = _punctuations,
+        pad: str = _pad,
+        eos: str = _eos,
+        bos: str = _bos,
+        ipa_characters: str = None,
+    ) -> None:
+        graphemes = create_phonemes_list(dict_phonemes_json)
+        if ipa_characters is not None:
+            graphemes += ipa_characters
+        super().__init__(graphemes, punctuations, pad, eos, bos, "<BLNK>", is_unique=False, is_sorted=True)
+        self._characters = graphemes
+
+    def _create_vocab(self):
+        self._vocab = [self._pad] + list(self._punctuations) + list(self._characters) + [self._blank]
+        self._char_to_id = {char: idx for idx, char in enumerate(self.vocab)}
+        # pylint: disable=unnecessary-comprehension
+        self._id_to_char = {idx: char for idx, char in enumerate(self.vocab)}
+
+    @staticmethod
+    def init_from_config(config: Coqpit):
+        if config.characters is not None:
+            _pad = config.characters["pad"]
+            _punctuations = config.characters["punctuations"]
+            _letters = config.characters["characters"]
+            _letters_ipa = config.characters["phonemes"]
+            return (
+                NaturalSpeechCharacters(graphemes=_letters, ipa_characters=_letters_ipa, punctuations=_punctuations, pad=_pad),
+                config,
+            )
+        characters = NaturalSpeechCharacters()
+        new_config = replace(config, characters=characters.to_config())
+        return characters, new_config
+
+    def to_config(self) -> "CharactersConfig":
+        return CharactersConfig(
+            characters=self._characters,
+            punctuations=self._punctuations,
+            pad=self._pad,
+            eos=None,
+            bos=None,
+            blank=self._blank,
+            is_unique=False,
+            is_sorted=True,
+        )
+
