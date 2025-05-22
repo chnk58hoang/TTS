@@ -1,0 +1,1 @@
+docker build . -t "nvidia/cuda:12.4.0-runtime-ubuntu22.04"
