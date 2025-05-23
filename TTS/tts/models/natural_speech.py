@@ -983,7 +983,7 @@ class NaturalSpeech(BaseTTS):
         z_slice_q, slice_ids_q = rand_segments(z_q, torch.minimum(z_q_lengths, y_lengths),
                                                self.args.spec_segment_size, let_short_samples=True, pad_short=True)
 
-        o2 = self.waveform_decoder(z_slice_q, g=g)
+        model_outputs = self.waveform_decoder(z_slice_q, g=g)
         # get the coresponding waveform slices
         gt_seg_2 = segment(waveform,
                            segment_indices=slice_ids_q * self.config.audio.hop_length,
@@ -1006,8 +1006,8 @@ class NaturalSpeech(BaseTTS):
                 "logs_q": logs_q,
                 "p_mask": p_mask,
                 "W": W,
-                "o2": o2,  # predicted waveform e2e (text -> duration -> upsample -> flow -> decoder)
-                "gt_seg_2": gt_seg_2,  # ground truth waveform segments corresponding to o2
+                "model_outputs": model_outputs,  # predicted waveform e2e (text -> duration -> upsample -> flow -> decoder)
+                "gt_seg_2": gt_seg_2,  # ground truth waveform segments corresponding to model_outputs
                 "z_q": z_q,
                 "gt_d": gt_d,
                 "slice_ids_q": slice_ids_q,  # slice ids from upsamled phoneme representation
@@ -1102,7 +1102,7 @@ class NaturalSpeech(BaseTTS):
             )
             # compute scores and features for e2e waveform outputs
             scores_disc_fake_e2e, _, scores_disc_real_e2e, _ = self.disc(
-                outputs["gt_seg_2"], outputs["o2"].detach()
+                outputs["gt_seg_2"], outputs["model_outputs"].detach()
             )
 
             # compute discriminator loss for posterior
@@ -1146,7 +1146,7 @@ class NaturalSpeech(BaseTTS):
             )
 
             scores_disc_fake_e2e, _, _, _ = self.disc(
-                self.model_outputs_cache["gt_seg_2"], self.model_outputs_cache["o2"].detach()
+                self.model_outputs_cache["gt_seg_2"], self.model_outputs_cache["model_outputs"].detach()
             )
 
             # compute losses
@@ -1178,7 +1178,7 @@ class NaturalSpeech(BaseTTS):
         raise ValueError(" [!] Unexpected `optimizer_idx`.")
 
     def _log(self, ap, batch, outputs, name_prefix="train"):  # pylint: disable=unused-argument,no-self-use
-        y_hat = outputs[1]["o2"]
+        y_hat = outputs[1]["model_outputs"]
         y = outputs[1]["gt_seg_2"]
         figures = plot_results(y_hat, y, ap, name_prefix)
         sample_voice = y_hat[0].squeeze(0).detach().cpu().numpy()
