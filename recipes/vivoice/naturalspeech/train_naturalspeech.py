@@ -65,7 +65,7 @@ def get_configs(args):
         compute_input_seq_cache=True,
         print_step=args.print_step,
         print_eval=False,
-        mixed_precision=True,
+        mixed_precision=False,
         max_text_len=325,  # change this if you have a larger VRAM than 16GB
     )
     return dataset_config, model_config

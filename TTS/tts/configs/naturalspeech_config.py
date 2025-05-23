@@ -122,7 +122,7 @@ class NaturalSpeechConfig(BaseTTSConfig):
 
     # loss params
     kl_loss_alpha: float = 1.0
-    if warm_up:
+    if not warm_up:
         kl_loss_fwd_alpha: float = 1.0e-3
     else:
         kl_loss_fwd_alpha: float = 0
