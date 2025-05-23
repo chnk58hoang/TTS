@@ -106,7 +106,6 @@ class NaturalSpeechConfig(BaseTTSConfig):
     model: str = "naturalspeech"
     model_args: NaturalSpeechArgs = field(default_factory=NaturalSpeechArgs)
     audio: NaturalSpeechAudioConfig = field(default_factory=NaturalSpeechAudioConfig)
-    warm_up: bool = False
     # optimizer
     grad_clip: List[float] = field(default_factory=lambda: [1000, 1000])
     grad_clip: List[float] = field(default_factory=lambda: [1000, 1000])
@@ -122,10 +121,7 @@ class NaturalSpeechConfig(BaseTTSConfig):
 
     # loss params
     kl_loss_alpha: float = 1.0
-    if not warm_up:
-        kl_loss_fwd_alpha: float = 1.0e-3
-    else:
-        kl_loss_fwd_alpha: float = 0
+    kl_loss_fwd_alpha: float = 1.0e-3
     gen_loss_alpha: float = 1.0
     gen_e2e_loss_alpha: float = 1.0
     feat_loss_alpha: float = 1.0

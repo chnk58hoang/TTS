@@ -43,12 +43,15 @@ def get_configs(args):
 
     # model args
     ns_args = NaturalSpeechArgs()
-
+    if args.warm_up:
+        kl_loss_fwd_alpha = 0.0
+    else:
+        kl_loss_fwd_alpha = 1.0e-3
     # model config
     model_config = NaturalSpeechConfig(
         model_args=ns_args,
         audio=audio_config,
-        warm_up=args.warm_up,
+        kl_loss_fwd_alpha=kl_loss_fwd_alpha,
         run_name="naturalspeech_vietnamese",
         batch_size=args.batch_size,
         eval_batch_size=args.eval_batch_size,
@@ -68,6 +71,7 @@ def get_configs(args):
         mixed_precision=False,
         max_text_len=325,  # change this if you have a larger VRAM than 16GB
     )
+    print(model_config.kl_loss_fwd_alpha)
     return dataset_config, model_config
 
 
