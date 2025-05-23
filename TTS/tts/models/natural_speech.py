@@ -1051,7 +1051,8 @@ class NaturalSpeech(BaseTTS):
         z = self.flow(z_q, y_mask, g=g, reverse=True)
         o = self.waveform_decoder((z * y_mask)[:, :, :None], g=g)
         outputs = {
-            "o": o,
+            "model_outputs": o,
+            "alignments": None,
             "y_mask": y_mask,
             "z": z,
             "z_q": z_q,
@@ -1299,7 +1300,7 @@ class NaturalSpeech(BaseTTS):
                 do_trim_silence=False,
             ).values()
             test_audios["{}-audio".format(idx)] = wav
-            test_figures["{}-alignment".format(idx)] = plot_alignment(alignment.T, output_fig=False)
+            # test_figures["{}-alignment".format(idx)] = plot_alignment(alignment.T, output_fig=False)
         return {"figures": test_figures, "audios": test_audios}
 
     def test_log(
