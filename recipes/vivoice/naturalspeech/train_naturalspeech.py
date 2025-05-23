@@ -48,6 +48,7 @@ def get_configs(args):
     model_config = NaturalSpeechConfig(
         model_args=ns_args,
         audio=audio_config,
+        warm_up=args.warm_up,
         run_name="naturalspeech_vietnamese",
         batch_size=args.batch_size,
         eval_batch_size=args.eval_batch_size,
@@ -145,6 +146,7 @@ if __name__ == "__main__":
                         default='TTS/TTS/tts/utils/text/vietnamese/dict_phoneme.json')
     parser.add_argument("--gpu", type=str, default="0", help="GPU to use for training")
     parser.add_argument("--multi_spk", type=bool, default=False)
+    parser.add_argument("--warm_up", type=bool, default=False)
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     os.makedirs(args.output_path, exist_ok=True)

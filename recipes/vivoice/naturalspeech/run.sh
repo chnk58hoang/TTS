@@ -11,6 +11,7 @@ output_path=/TTS/recipes/vivoice/naturalspeech/models/"${formatter}"
 dict_phonemes_json=/TTS/TTS/tts/utils/text/vietnamese/dict_phoneme.json
 gpu=0
 multi_spk=False
+warm_up=True
 
 python train_naturalspeech.py \
     --dataset_path "${dataset_path}" \
@@ -21,6 +22,7 @@ python train_naturalspeech.py \
     --output_path "${output_path}" \
     --dict_phonemes_json "${dict_phonemes_json}" \
     --gpu "${gpu}" \
-    --multi_spk "${multi_spk}"
+    --multi_spk "${multi_spk}" \
+    --warm_up "${warm_up}"
 
 
