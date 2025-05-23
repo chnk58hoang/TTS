@@ -1,5 +1,6 @@
 import math
 import torch
+import numpy as np
 from torch import nn
 from TTS.tts.layers.glow_tts.glow import WN
 from TTS.tts.layers.glow_tts.transformer import RelativePositionTransformer, RelativePositionMultiHeadAttention

@@ -859,7 +859,7 @@ class NaturalSpeechGeneratorLoss(nn.Module):
         self.feat_loss_alpha = c.feat_loss_alpha
         self.dur_loss_alpha = c.dur_loss_alpha
         self.mel_loss_alpha = c.mel_loss_alpha
-        self.spk_encoder_loss_alpha = c.speaker_encoder_loss_alpha
+        self.spk_encoder_loss_alpha = c.spk_encoder_loss_alpha
         self.stft = TorchSTFT(
             c.audio.fft_size,
             c.audio.hop_length,
@@ -978,7 +978,7 @@ class NaturalSpeechGeneratorLoss(nn.Module):
         use_speaker_encoder_as_loss=False,
         gt_spk_emb=None,
         syn_spk_emb=None,
-        use_stdw=False,
+        use_sdtw=False,
     ):
         """
         Shapes:
@@ -998,7 +998,7 @@ class NaturalSpeechGeneratorLoss(nn.Module):
         z_mask = sequence_mask(z_len).float()
         # compute losses
         # kl losses (bwd, fwd ks losses)
-        if not use_stdw:
+        if not use_sdtw:
             loss_kl = (
                 self.kl_loss(z_p=z_p, logs_q=logs_q, m_p=m_p, logs_p=logs_p, z_mask=z_mask.unsqueeze(1))
                 * self.kl_loss_alpha

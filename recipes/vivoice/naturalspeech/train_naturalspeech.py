@@ -22,12 +22,7 @@ def build_characters(graphemes: str = None,
                      bos: str = None,
                      ipa_characters: str = None,):
     ns_charaters = NaturalSpeechCharacters(graphemes=graphemes,
-                                           dict_phonemes_json=dict_phonemes_json,
-                                           punctuations=punctuations,
-                                           pad=pad,
-                                           eos=eos,
-                                           bos=bos,
-                                           ipa_characters=ipa_characters)
+                                           dict_phonemes_json=dict_phonemes_json)
     return ns_charaters
 
 
@@ -79,11 +74,11 @@ def build_tokenizer(model_config, characters):
     # Tokenizer is used to convert text to sequences of token IDs.
     # config is updated with the default characters if not defined in the config.
     phomizer = ViPhonemizer()
-    tokenizer, model_config = TTSTokenizer(use_phonemes=model_config.use_phonemes,
-                                           characters=characters,
-                                           phonemizer=phomizer,
-                                           use_eos_bos=True)
-    return tokenizer, model_config
+    tokenizer = TTSTokenizer(use_phonemes=model_config.use_phonemes,
+                             characters=characters,
+                             phonemizer=phomizer,
+                             use_eos_bos=False)
+    return tokenizer
 
 
 def get_train_val_samples(dataset_config,
@@ -100,15 +95,18 @@ def main(args):
     dataset_config, model_config = get_configs(args)
     audio_processor = AudioProcessor.init_from_config(model_config)
     characters = build_characters(dict_phonemes_json=args.dict_phonemes_json,)
-    tokenizer, model_config = build_tokenizer(model_config, characters)
+    tokenizer = build_tokenizer(model_config, characters)
     train_samples, eval_samples = get_train_val_samples(dataset_config, model_config)
-    speaker_manager = SpeakerManager()
-    speaker_manager.set_ids_from_data(train_samples + eval_samples, parse_key="speaker_name")
-    model_config.model_args.num_speakers = speaker_manager.num_speakers
+    if args.multi_spk:
+        speaker_manager = SpeakerManager()
+        speaker_manager.set_ids_from_data(train_samples + eval_samples, parse_key="speaker_name")
+        model_config.model_args.num_speakers = speaker_manager.num_speakers
+    else:
+        speaker_manager = None
     ns_model = NaturalSpeech(model_config, audio_processor, tokenizer,
                              speaker_manager=speaker_manager)
     trainer = Trainer(
-        TrainerArgs(continue_path=args.output_path,
+        TrainerArgs(continue_path=args.continue_path,
                     restore_path=args.restore_path,
                     gpu=args.gpu),
         model_config,
@@ -138,12 +136,15 @@ if __name__ == "__main__":
                         help="Number of steps to print training progress")
     parser.add_argument("--output_path", type=str, required=True,
                         help="Path to save the trained model and logs")
+    parser.add_argument("--continue_path", type=str, required=False,
+                        default="")
     parser.add_argument("--restore_path", type=str, default=None,
                         help="Path to restore the model from a checkpoint")
     parser.add_argument("--dict_phonemes_json", type=str, required=True,
                         help="Path to the phoneme dictionary JSON file",
                         default='TTS/TTS/tts/utils/text/vietnamese/dict_phoneme.json')
     parser.add_argument("--gpu", type=str, default="0", help="GPU to use for training")
+    parser.add_argument("--multi_spk", type=bool, default=False)
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     os.makedirs(args.output_path, exist_ok=True)

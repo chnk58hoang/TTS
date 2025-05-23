@@ -226,6 +226,7 @@ class TTSDataset(Dataset):
 
     def get_phonemes(self, idx, text):
         out_dict = self.phoneme_dataset[idx]
+        # print(out_dict)
         assert text == out_dict["text"], f"{text} != {out_dict['text']}"
         assert len(out_dict["token_ids"]) > 0
         return out_dict
@@ -625,9 +626,13 @@ class PhonemeDataset(Dataset):
         file_ext = "_phoneme.npy"
         cache_path = os.path.join(self.cache_path, file_name + file_ext)
         try:
+            # print('exist')
             ids = np.load(cache_path)
+            # print(ids)
         except FileNotFoundError:
+            # print('not found')
             ids = self.tokenizer.text_to_ids(text, language=language)
+            # print(ids)
             np.save(cache_path, ids)
         return ids
 

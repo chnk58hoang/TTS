@@ -62,7 +62,7 @@ class TTSTokenizer:
         self.pad_id = self.characters.char_to_id(self.characters.pad) if self.characters.pad else None
         self.blank_id = self.characters.char_to_id(self.characters.blank) if self.characters.blank else None
 
-    def encode(self, text: str) -> List[int]:
+    def encode(self, text: str | List) -> List[int]:
         """Encodes a string of text as a sequence of IDs."""
         token_ids = []
         for char in text:
@@ -73,7 +73,6 @@ class TTSTokenizer:
                 # discard but store not found characters
                 if char not in self.not_found_characters:
                     self.not_found_characters.append(char)
-                    print(text)
                     print(f" [!] Character {repr(char)} not found in the vocabulary. Discarding it.")
         return token_ids
 
@@ -106,8 +105,10 @@ class TTSTokenizer:
         # TODO: text cleaner should pick the right routine based on the language
         if self.text_cleaner is not None:
             text = self.text_cleaner(text)
+        # print(text)
         if self.use_phonemes:
             text = self.phonemizer.phonemize(text, separator="", language=language)
+        print(text)
         text = self.encode(text)
         if self.add_blank:
             text = self.intersperse_blank_char(text, True)

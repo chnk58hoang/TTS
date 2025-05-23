@@ -630,9 +630,9 @@ class NaturalSpeech(BaseTTS):
         super().__init__(config, ap, tokenizer, speaker_manager, language_manager)
         self.init_multispeaker(config)
         self.init_multilingual(config)
-        self.init_upsampling(config)
-        self.use_gt_duration = self.config.models.use_gt_duration
-        self.use_sdtw = self.config.models.use_sdtw
+        self.init_upsampling()
+        self.use_gt_duration = self.config.use_gt_duration
+        self.use_sdtw = self.config.use_sdtw
 
         self.text_encoder = TextEncoder(n_vocab=self.args.num_chars,
                                         out_channels=self.args.hidden_channels,
@@ -641,7 +641,7 @@ class NaturalSpeech(BaseTTS):
                                         num_heads=self.args.num_heads_text_encoder,
                                         num_layers=self.args.num_layers_text_encoder,
                                         kernel_size=self.args.kernel_size_text_encoder,
-                                        dropout=self.args.dropout_p_text_encoder,
+                                        dropout_p=self.args.dropout_p_text_encoder,
                                         language_emb_dim=self.embedded_speaker_dim)
 
         self.posterior_encoder = PosteriorEncoder(in_channels=self.args.out_channels,
@@ -892,7 +892,7 @@ class NaturalSpeech(BaseTTS):
             logp = logp2 + logp3 + logp1 + logp4
             attn = maximum_path(logp, attn_mask.squeeze(1)).detach()  # [b, t, t']
             gt_durations = attn.sum(-1)  # [b, t]
-        return gt_durations
+        return gt_durations, attn
 
     def forward(  # pylint: disable=dangerous-default-value
         self,
@@ -955,15 +955,15 @@ class NaturalSpeech(BaseTTS):
         # flow for posterior
         z_p = self.flow(z, y_mask, g=g)
         # text_encoder
-        x, _, _, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb)
+        x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb)
         # forward mas for compute gt duration
-        gt_d = self.forward_mas(outputs, z_p, m_p, logs_p, x, x_mask, y_mask, g=g, lang_emb=lang_emb)  # [b, t]
+        gt_d, attn = self.forward_mas(outputs, z_p, m_p, logs_p, x, x_mask, y_mask, g=g, lang_emb=lang_emb)  # [b, t]
         # duration predictor
         log_pred_d = self.duration_predictor(x, x_mask, g=g)  # [batch, 1, T]
         pred_d = torch.exp(log_pred_d) * x_mask  # [batch, 1, T]
         gt_d_ = gt_d.unsqueeze(1)
         log_gt_d_ = torch.log(gt_d_ + 1e-6) * x_mask  # [batch, 1, T]
-        duration_loss = torch.sum((log_gt_d_ - log_pred_d), dim=[1, 2]) / torch.sum(x_mask)  # mse for duration loss
+        duration_loss = torch.sum((log_gt_d_ - log_pred_d) ** 2, dim=[1, 2]) / torch.sum(x_mask)  # mse for duration loss
         # learnable upsampling
         if not self.use_gt_duration:
             gt_d = pred_d.squeeze(1)  # [batch, T]
@@ -994,6 +994,7 @@ class NaturalSpeech(BaseTTS):
                 "o": o,  # predicted waveform [b, 1, t] from posterior
                 "gt_seg": gt_seg,  # ground truth waveform segments corresponding to o
                 "duration_loss": duration_loss,  # duration loss
+                "alignments": attn,
                 "slice_ids": slice_ids,  # posterior slice ids
                 "x_mask": x_mask,
                 "y_mask": y_mask,
@@ -1145,7 +1146,7 @@ class NaturalSpeech(BaseTTS):
             )
 
             scores_disc_fake_e2e, _, _, _ = self.disc(
-                outputs["gt_seg_2"], outputs["o2"].detach()
+                self.model_outputs_cache["gt_seg_2"], self.model_outputs_cache["o2"].detach()
             )
 
             # compute losses
@@ -1159,17 +1160,16 @@ class NaturalSpeech(BaseTTS):
                     logs_q=self.model_outputs_cache["logs_q"].float(),
                     m_p=self.model_outputs_cache["m_p"].float(),
                     m_q=self.model_outputs_cache["m_q"].float(),
-                    logs_p=self.model_outputs_cache["logs_p"].float(),
                     z_len=spec_lens,
                     p_mask=self.model_outputs_cache["p_mask"].float(),
                     scores_disc_fake=scores_disc_fake,
                     feats_disc_fake=feats_disc_fake,
                     feats_disc_real=feats_disc_real,
-                    scores_dics_fake_e2e=scores_disc_fake_e2e,
+                    scores_disc_fake_e2e=scores_disc_fake_e2e,
                     loss_duration=self.model_outputs_cache["duration_loss"],
                     use_speaker_encoder_as_loss=self.args.use_speaker_encoder_as_loss,
-                    gt_spk_emb=self.model_outputs_cache["gt_spk_emb"],
-                    syn_spk_emb=self.model_outputs_cache["syn_spk_emb"],
+                    gt_spk_emb=None,
+                    syn_spk_emb=None,
                     use_sdtw=self.use_sdtw
                 )
 
@@ -1178,8 +1178,8 @@ class NaturalSpeech(BaseTTS):
         raise ValueError(" [!] Unexpected `optimizer_idx`.")
 
     def _log(self, ap, batch, outputs, name_prefix="train"):  # pylint: disable=unused-argument,no-self-use
-        y_hat = outputs[1]["model_outputs"]
-        y = outputs[1]["waveform_seg"]
+        y_hat = outputs[1]["o2"]
+        y = outputs[1]["gt_seg_2"]
         figures = plot_results(y_hat, y, ap, name_prefix)
         sample_voice = y_hat[0].squeeze(0).detach().cpu().numpy()
         audios = {f"{name_prefix}/audio": sample_voice}
@@ -1798,6 +1798,7 @@ class NaturalSpeechCharacters(BaseCharacters):
         ipa_characters: str = None,
     ) -> None:
         graphemes = create_phonemes_list(dict_phonemes_json)
+        print(graphemes)
         if ipa_characters is not None:
             graphemes += ipa_characters
         super().__init__(graphemes, punctuations, pad, eos, bos, "<BLNK>", is_unique=False, is_sorted=True)

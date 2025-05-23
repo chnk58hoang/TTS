@@ -162,7 +162,8 @@ class NaturalSpeechConfig(BaseTTSConfig):
     speaker_embedding_channels: int = 256
     language_ids_file: str = None
     use_language_embedding: bool = False
-
+    use_gt_duration: bool = True
+    use_sdtw: bool = False
     # use d-vectors
     use_d_vector_file: bool = False
     d_vector_file: List[str] = None

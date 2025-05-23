@@ -2,7 +2,8 @@ from pyvi import ViTokenizer
 import json
 
 
-dict_phoneme = json.load(open('dict_phoneme.json', 'r'))
+json_phoneme_path = "/TTS/TTS/tts/utils/text/vietnamese/dict_phoneme.json"
+dict_phoneme = json.load(open(json_phoneme_path, 'r'))
 all_syllable = list(dict_phoneme.keys())
 
 
@@ -40,6 +41,6 @@ def vietnamese_text_to_phonemes(text: str,
                         sub_cv.append(ph)
             except:
                 sub_cv.append(sym)
-    convert_text.append(" ".join(sub_cv))
-    convert_text = ' '.join(convert_text)
-    return convert_text
+    # convert_text.append(" ".join(sub_cv))
+    # convert_text = ' '.join(convert_text)
+    return sub_cv
