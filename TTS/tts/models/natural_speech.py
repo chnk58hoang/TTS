@@ -1099,11 +1099,11 @@ class NaturalSpeech(BaseTTS):
 
             # compute scores and features for posterior waveform outputs
             scores_disc_fake, _, scores_disc_real, _ = self.disc(
-                outputs["gt_seg"], outputs["o"].detach()
+                outputs["o"].detach(), outputs["gt_seg"]
             )
             # compute scores and features for e2e waveform outputs
             scores_disc_fake_e2e, _, scores_disc_real_e2e, _ = self.disc(
-                outputs["gt_seg_2"], outputs["model_outputs"].detach()
+                outputs["model_outputs"].detach(), outputs["gt_seg_2"]
             )
 
             # compute discriminator loss for posterior
@@ -1143,11 +1143,11 @@ class NaturalSpeech(BaseTTS):
 
             # compute discriminator scores and features
             scores_disc_fake, feats_disc_fake, _, feats_disc_real = self.disc(
-                self.model_outputs_cache["gt_seg"], self.model_outputs_cache["o"]
+                self.model_outputs_cache["o"], self.model_outputs_cache["gt_seg"]
             )
 
             scores_disc_fake_e2e, _, _, _ = self.disc(
-                self.model_outputs_cache["gt_seg_2"], self.model_outputs_cache["model_outputs"].detach()
+                self.model_outputs_cache["model_outputs"], self.model_outputs_cache["gt_seg_2"]
             )
 
             # compute losses

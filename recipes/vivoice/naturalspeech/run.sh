@@ -4,7 +4,7 @@
 dataset_path=/data/female
 meta_file_train=metadata.csv
 formatter=ns_female
-batch_size=24
+batch_size=32
 epochs=1500
 continue_path=
 output_path=/TTS/recipes/vivoice/naturalspeech/models/"${formatter}"
