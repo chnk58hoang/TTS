@@ -67,8 +67,8 @@ class VitsDiscriminator(nn.Module):
     def forward(self, x, x_hat=None):
         """
         Args:
-            x (Tensor): ground truth waveform.
-            x_hat (Tensor): precdited waveform.
+            x (Tensor): predicted waveform.
+            x_hat (Tensor): groundtruth waveform.
 
         Returns:
             List[Tensor]: discriminator scores.

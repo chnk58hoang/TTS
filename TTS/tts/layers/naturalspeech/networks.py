@@ -463,3 +463,4 @@ class VAEMemoryBank(nn.Module):
     def forward(self, z):
         b, _, _ = z.shape
         return self.encoder(z, self.memory_bank.unsqueeze(0).expand(b, 1, 1), attn_mask=None)
+

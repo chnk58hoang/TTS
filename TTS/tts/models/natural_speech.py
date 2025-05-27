@@ -1023,6 +1023,25 @@ class NaturalSpeech(BaseTTS):
 
     @torch.no_grad()
     def inference(self, x, aux_input={"x_lengths": None, "d_vectors": None, "speaker_ids": None, "language_ids": None, "durations": None}):
+        # pylint: disable=dangerous-default-value
+        """
+        Note:
+            To run in batch mode, provide `x_lengths` else model assumes that the batch size is 1.
+
+        Shapes:
+            - x: :math:`[B, T_seq]`
+            - x_lengths: :math:`[B]`
+            - d_vectors: :math:`[B, C]`
+            - speaker_ids: :math:`[B]`
+
+        Return Shapes:
+            - model_outputs: :math:`[B, 1, T_wav]`
+            - alignments: :math:`[B, T_seq, T_dec]`
+            - z: :math:`[B, C, T_dec]`
+            - z_p: :math:`[B, C, T_dec]`
+            - m_p: :math:`[B, C, T_dec]`
+            - logs_p: :math:`[B, C, T_dec]`
+        """
         sid, g, lid, durations = self._set_cond_input(aux_input)
         x_lengths = self._set_x_lengths(x, aux_input)
 
@@ -1296,7 +1315,7 @@ class NaturalSpeech(BaseTTS):
                 d_vector=aux_inputs["d_vector"],
                 style_wav=aux_inputs["style_wav"],
                 language_id=aux_inputs["language_id"],
-                use_griffin_lim=True,
+                use_griffin_lim=False,
                 do_trim_silence=False,
             ).values()
             test_audios["{}-audio".format(idx)] = wav
