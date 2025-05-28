@@ -807,7 +807,7 @@ class NaturalSpeechDiscriminatorLoss(nn.Module):
         loss_disc = loss_disc * self.disc_loss_alpha
         return_dict["loss_disc"] = loss_disc
         loss = loss + return_dict["loss_disc"]
-        return_dict["loss_d"] = loss
+        # return_dict["loss"] = loss
 
         for i, ldr in enumerate(loss_disc_real):
             return_dict[f"loss_disc_real_{i}"] = ldr
@@ -822,7 +822,7 @@ class NaturalSpeechDiscriminatorLoss(nn.Module):
         loss_disc = loss_disc * self.e2e_disc_loss_alpha
         return_dict["loss_disc_e2e"] = loss_disc
         loss = loss + return_dict["loss_disc_e2e"]
-        return_dict["loss_d_e2e"] = loss
+        # return_dict["loss"] = loss
 
         for i, ldr in enumerate(loss_disc_real):
             return_dict[f"loss_disc_real_{i}_e2e"] = ldr
@@ -841,7 +841,7 @@ class NaturalSpeechDiscriminatorLoss(nn.Module):
         return_dict.update(self.compute_disc_loss(scores_disc_real, scores_disc_fake))
         # compute e2e discriminator loss
         return_dict.update(self.compute_disc_e2e_loss(scores_disc_real_e2e, scores_disc_fake_e2e))
-        loss = return_dict["loss_d"] + return_dict["loss_d_e2e"]
+        loss = return_dict["loss_disc"] + return_dict["loss_disc_e2e"]
         return_dict["loss"] = loss
         return return_dict
 

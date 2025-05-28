@@ -10,7 +10,7 @@ continue_path=
 output_path=/TTS/recipes/vivoice/naturalspeech/models/"${formatter}"
 dict_phonemes_json=/TTS/TTS/tts/utils/text/vietnamese/dict_phoneme.json
 gpu=0
-multi_spk=False
+multi_spk=True
 warm_up=True
 
 python train_naturalspeech.py \

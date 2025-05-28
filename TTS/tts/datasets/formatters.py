@@ -208,10 +208,13 @@ def speakers_101(root_path, meta_file, **kwargs):  # pylint: disable=unused-argu
     items = []
     with open(txt_file, "r", encoding="utf-8") as ttf:
         for line in ttf:
+            # print(line)
             cols = line.split("|")
+            # print(cols)
             speaker_name = cols[0]
             wav_file = os.path.join(root_path, "wavs", speaker_name, cols[1])
             text = cols[2]
+            # print(text)
             items.append({"text": text,
                           "audio_file": wav_file,
                           "speaker_name": speaker_name,
