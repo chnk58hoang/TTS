@@ -605,6 +605,7 @@ class NaturalSpeechArgs(Coqpit):
     freeze_PE: bool = False
     freeze_flow_decoder: bool = False
     freeze_waveform_decoder: bool = False
+    freeze_learnable_upsampling: bool = False
     encoder_sample_rate: int = None
     interpolate_z: bool = True
     reinit_DP: bool = False
@@ -842,6 +843,10 @@ class NaturalSpeech(BaseTTS):
 
         if self.args.freeze_waveform_decoder:
             for param in self.waveform_decoder.parameters():
+                param.requires_grad = False
+        
+        if self.args.freeze_learnable_upsampling:
+            for param in self.learnable_upsampling.parameters():
                 param.requires_grad = False
 
     @staticmethod
