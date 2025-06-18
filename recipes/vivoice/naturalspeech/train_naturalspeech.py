@@ -45,8 +45,10 @@ def get_configs(args):
     ns_args = NaturalSpeechArgs()
     if args.warm_up:
         kl_loss_fwd_alpha = 0.0
+        print("done true")
     else:
         kl_loss_fwd_alpha = 1.0e-3
+        print("done false")
     # model config
     model_config = NaturalSpeechConfig(
         model_args=ns_args,
@@ -71,7 +73,7 @@ def get_configs(args):
         mixed_precision=False,
         max_text_len=325,  # change this if you have a larger VRAM than 16GB
     )
-    print(model_config.kl_loss_fwd_alpha)
+    # print(model_config.kl_loss_fwd_alpha)
     return dataset_config, model_config
 
 
@@ -149,8 +151,8 @@ if __name__ == "__main__":
                         help="Path to the phoneme dictionary JSON file",
                         default='TTS/TTS/tts/utils/text/vietnamese/dict_phoneme.json')
     parser.add_argument("--gpu", type=str, default="0", help="GPU to use for training")
-    parser.add_argument("--multi_spk", type=bool, default=False)
-    parser.add_argument("--warm_up", type=bool, default=False)
+    parser.add_argument("--multi_spk", action='store_true')
+    parser.add_argument("--warm_up", action='store_true')
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     os.makedirs(args.output_path, exist_ok=True)
