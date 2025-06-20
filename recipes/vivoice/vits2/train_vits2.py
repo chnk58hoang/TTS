@@ -11,6 +11,7 @@ from TTS.tts.models.vits2 import (Vits2,
 from TTS.tts.utils.speakers import SpeakerManager
 from TTS.tts.utils.text.tokenizer import TTSTokenizer
 from TTS.utils.audio import AudioProcessor
+from TTS.tts.utils.text.cleaners import english_cleaners
 
 
 def build_characters():
@@ -68,6 +69,7 @@ def build_tokenizer(model_config, characters):
     # phomizer = ViPhonemizer()
     tokenizer = TTSTokenizer(use_phonemes=model_config.use_phonemes,
                              characters=characters,
+                             text_cleaner=english_cleaners,
                              phonemizer=None,
                              use_eos_bos=False)
     return tokenizer

@@ -108,7 +108,6 @@ class TTSTokenizer:
         # print(text)
         if self.use_phonemes:
             text = self.phonemizer.phonemize(text, separator="", language=language)
-        print(text)
         text = self.encode(text)
         if self.add_blank:
             text = self.intersperse_blank_char(text, True)

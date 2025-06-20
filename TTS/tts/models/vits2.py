@@ -1049,6 +1049,7 @@ class Vits2(BaseTTS):
                 "logs_p_audio": logsp_audio,
                 "m_q_audio": m_q_audio,
                 "logs_q_audio": logs_q_audio,
+                "l_length": l_length,
                 "waveform_seg": wav_seg,
             }
         )
@@ -1092,11 +1093,11 @@ class Vits2(BaseTTS):
             g = self.emb_g(sid).unsqueeze(-1)
 
         # language embedding
-        z_p_text, m_p_text, logs_p_text, h_text, x_mask = self.enc_p(x, x_lengths, g=g)
+        z_p_text, m_p_text, logs_p_text, h_text, x_mask = self.text_encoder(x, x_lengths)
         if self.args.use_sdp:
-            logw = self.dp(h_text, x_mask, g=g, reverse=True, noise_scale=self.inference_noise_scale_dp)
+            logw = self.duration_predictor(h_text, x_mask, g=g, reverse=True, noise_scale=self.inference_noise_scale_dp)
         else:
-            logw = self.dp(h_text, x_mask, g=g)
+            logw = self.duration_predictor(h_text, x_mask, g=g)
         w = torch.exp(logw) * x_mask * self.length_scale
         w_ceil = torch.ceil(w)
         y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
@@ -1276,8 +1277,8 @@ class Vits2(BaseTTS):
                     feats_disc_real=feats_disc_real,
                     loss_duration=self.model_outputs_cache["l_length"],
                     use_speaker_encoder_as_loss=self.args.use_speaker_encoder_as_loss,
-                    gt_spk_emb=self.model_outputs_cache["gt_spk_emb"],
-                    syn_spk_emb=self.model_outputs_cache["syn_spk_emb"],
+                    # gt_spk_emb=self.model_outputs_cache["gt_spk_emb"],
+                    # syn_spk_emb=self.model_outputs_cache["syn_spk_emb"],
                 )
 
             return self.model_outputs_cache, loss_dict

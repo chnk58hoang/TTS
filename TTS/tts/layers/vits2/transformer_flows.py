@@ -25,10 +25,10 @@ class TransformerResidualCouplingLayer(nn.Module):
         self.pre = nn.Conv1d(self.half_channels, hidden_channels, 1)
         # pre_transform layer
         self.pre_transformer = RelativePositionTransformer(
-            in_channels=hidden_channels,
-            out_channels=hidden_channels,
-            hidden_channels=hidden_channels,
-            hidden_channels_ffn=hidden_channels,
+            in_channels=self.half_channels,
+            out_channels=self.half_channels,
+            hidden_channels=self.half_channels,
+            hidden_channels_ffn=self.half_channels,
             num_heads=8,
             num_layers=num_layers,
             kernel_size=kernel_size,
@@ -58,9 +58,9 @@ class TransformerResidualCouplingLayer(nn.Module):
         if self.pre_transformer is not None:
             x0_ = self.pre_transformer(x0 * x_mask, x_mask)
             x0_ = x0_ + x0  # residual connection
-        h = self.pre(x0_.mT).mT * x_mask
+        h = self.pre(x0_) * x_mask
         h = self.enc(h, x_mask, g=g)
-        stats = self.post(h.mT).mT * x_mask
+        stats = self.post(h) * x_mask
         if not self.mean_only:
             m_flow, logs_flow = torch.split(stats, [self.half_channels] * 2, 1)
         else:
