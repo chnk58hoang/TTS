@@ -86,7 +86,7 @@ def get_train_val_samples(dataset_config,
 def main(args):
     dataset_config, model_config = get_configs(args)
     audio_processor = AudioProcessor.init_from_config(model_config)
-    characters = build_characters(dict_phonemes_json=args.dict_phonemes_json,)
+    characters = build_characters()
     tokenizer = build_tokenizer(model_config, characters)
     train_samples, eval_samples = get_train_val_samples(dataset_config, model_config)
     if args.multi_spk:
