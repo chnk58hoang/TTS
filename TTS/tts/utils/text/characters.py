@@ -21,7 +21,7 @@ _eos = "<EOS>"
 _bos = "<BOS>"
 _blank = "<BLNK>"  # TODO: check if we need this alongside with PAD
 _characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-_vi_characters = ""
+_vi_characters = "aàáảãạăằắẳẵặâầấẩẫậbcddđeèéẻẽẹêềếểễệghiìíỉĩịklmnoòóỏõọôồốổỗộơờớởỡợpqrstuùúủũụưừứửữựvxyỳýỷỹỵ"
 _punctuations = "!'(),-.:;? "
 
 

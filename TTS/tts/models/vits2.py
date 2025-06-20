@@ -8,7 +8,6 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torchaudio
-import json
 from coqpit import Coqpit
 from librosa.filters import mel as librosa_mel_fn
 from torch import nn
@@ -21,17 +20,19 @@ from trainer.trainer_utils import get_optimizer, get_scheduler
 
 from TTS.tts.configs.shared_configs import CharactersConfig
 from TTS.tts.datasets.dataset import TTSDataset, _parse_sample
+from TTS.tts.layers.glow_tts.duration_predictor import DurationPredictor
 from TTS.tts.layers.vits.discriminator import VitsDiscriminator
-from TTS.tts.layers.naturalspeech.networks import (DurationPredictor, LearnableUpsampling,
-                                                   TextEncoder, ResidualCouplingBlocks,
-                                                   PosteriorEncoder)
+from TTS.tts.layers.vits.networks import PosteriorEncoder, ResidualCouplingBlocks
+from TTS.tts.layers.vits2.networks import TextEncoder
+from TTS.tts.layers.vits2.transformer_flows import TransformerResidualCouplingBlock
+from TTS.tts.layers.vits.stochastic_duration_predictor import StochasticDurationPredictor
 from TTS.tts.models.base_tts import BaseTTS
 from TTS.tts.utils.fairseq import rehash_fairseq_vits_checkpoint
 from TTS.tts.utils.helpers import generate_path, maximum_path, rand_segments, segment, sequence_mask
 from TTS.tts.utils.languages import LanguageManager
 from TTS.tts.utils.speakers import SpeakerManager
 from TTS.tts.utils.synthesis import synthesis
-from TTS.tts.utils.text.characters import BaseCharacters, BaseVocabulary, _characters, _pad, _phonemes, _punctuations, _eos, _bos
+from TTS.tts.utils.text.characters import BaseCharacters, BaseVocabulary, _vi_characters, _pad, _phonemes, _punctuations
 from TTS.tts.utils.text.tokenizer import TTSTokenizer
 from TTS.tts.utils.visual import plot_alignment
 from TTS.utils.io import load_fsspec
@@ -39,7 +40,11 @@ from TTS.utils.samplers import BucketBatchSampler
 from TTS.vocoder.models.hifigan_generator import HifiganGenerator
 from TTS.vocoder.utils.generic_utils import plot_results
 
+##############################
+# IO / Feature extraction
+##############################
 
+# pylint: disable=global-statement
 hann_window = {}
 mel_basis = {}
 
@@ -211,7 +216,7 @@ def wav_to_mel(y, n_fft, num_mels, sample_rate, hop_length, win_length, fmin, fm
 
 
 @dataclass
-class NaturalSpeechAudioConfig(Coqpit):
+class Vits2AudioConfig(Coqpit):
     fft_size: int = 1024
     sample_rate: int = 22050
     win_length: int = 1024
@@ -250,7 +255,7 @@ def get_attribute_balancer_weights(items: list, attr_name: str, multi_dict: dict
     )
 
 
-class NaturalSpeechDataset(TTSDataset):
+class Vits2Dataset(TTSDataset):
     def __init__(self, model_args, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pad_id = self.tokenizer.characters.pad_id
@@ -354,9 +359,14 @@ class NaturalSpeechDataset(TTSDataset):
         }
 
 
+##############################
+# MODEL DEFINITION
+##############################
+
+
 @dataclass
-class NaturalSpeechArgs(Coqpit):
-    """Natural speech model arguments.
+class Vits2Args(Coqpit):
+    """VITS2 model arguments.
 
     Args:
 
@@ -530,25 +540,6 @@ class NaturalSpeechArgs(Coqpit):
             will be used to upsampling the latent variable z with the sampling rate `encoder_sample_rate`
             to the `config.audio.sample_rate`. If it is False you will need to add extra
             `upsample_rates_decoder` to match the shape. Defaults to True.
-        dp_kernel_size (int):
-            Kernel size of the duration predictor. Defaults to 3.
-        dropout_dp (float):
-            Dropout rate of the duration predictor. Defaults to 0.5.
-        d_predictor (int):
-            predictor dim of learnable upsampling. Defaults to 192
-        lu_kernel_size (int):
-            kernel size of learnable upsampling. Defaults to 3.
-        dropout_lu (float):
-            Dropout rate of the learnable upsampling. Defaults to 0.5.
-        lu_conv_output_size (int):
-            output size of the learnable upsampling. Defaults to 8.
-        lu_dim_w (int):
-            dim_w of the learnable upsampling. Defaults to 4.
-        lu_dim_c (int):
-            dim_c of the learnable upsampling. Defaults to 2.
-        lu_max_seq_len (int):
-            max_seq_len of the learnable upsampling. Defaults to 1000.
-
 
     """
 
@@ -605,76 +596,98 @@ class NaturalSpeechArgs(Coqpit):
     freeze_PE: bool = False
     freeze_flow_decoder: bool = False
     freeze_waveform_decoder: bool = False
-    freeze_learnable_upsampling: bool = False
     encoder_sample_rate: int = None
     interpolate_z: bool = True
     reinit_DP: bool = False
     reinit_text_encoder: bool = False
-    dp_kernel_size: int = 3
-    dropout_dp: float = 0.5
-    d_predictor: int = 192
-    lu_kernel_size: int = 3
-    dropout_lu: float = 0.0
-    lu_conv_output_size: int = 8
-    lu_dim_w: int = 4
-    lu_dim_c: int = 2
-    lu_max_seq_len: int = 1000
+    mas_noise_scale: float = 0.01
 
 
-class NaturalSpeech(BaseTTS):
-    def __init__(self,
-                 config: Coqpit,
-                 ap: "AudioProcessor" = None,
-                 tokenizer: TTSTokenizer = None,
-                 speaker_manager: SpeakerManager = None,
-                 language_manager: LanguageManager = None,):
+class Vits2(BaseTTS):
+    """VITS2 TTS model
+    """
+
+    def __init__(
+        self,
+        config: Coqpit,
+        ap: "AudioProcessor" = None,
+        tokenizer: "TTSTokenizer" = None,
+        speaker_manager: SpeakerManager = None,
+        language_manager: LanguageManager = None,
+    ):
         super().__init__(config, ap, tokenizer, speaker_manager, language_manager)
+
         self.init_multispeaker(config)
         self.init_multilingual(config)
         self.init_upsampling()
-        self.use_gt_duration = self.config.use_gt_duration
-        self.use_sdtw = self.config.use_sdtw
 
-        self.text_encoder = TextEncoder(n_vocab=self.args.num_chars,
-                                        out_channels=self.args.hidden_channels,
-                                        hidden_channels=self.args.hidden_channels,
-                                        hidden_channels_ffn=self.args.hidden_channels_ffn_text_encoder,
-                                        num_heads=self.args.num_heads_text_encoder,
-                                        num_layers=self.args.num_layers_text_encoder,
-                                        kernel_size=self.args.kernel_size_text_encoder,
-                                        dropout_p=self.args.dropout_p_text_encoder,
-                                        language_emb_dim=self.embedded_speaker_dim)
+        self.length_scale = self.args.length_scale
+        self.noise_scale = self.args.noise_scale
+        self.inference_noise_scale = self.args.inference_noise_scale
+        self.inference_noise_scale_dp = self.args.inference_noise_scale_dp
+        self.noise_scale_dp = self.args.noise_scale_dp
+        self.max_inference_len = self.args.max_inference_len
+        self.spec_segment_size = self.args.spec_segment_size
 
-        self.posterior_encoder = PosteriorEncoder(in_channels=self.args.out_channels,
-                                                  out_channels=self.args.hidden_channels,
-                                                  hidden_channels=self.args.hidden_channels,
-                                                  kernel_size=self.args.kernel_size_posterior_encoder,
-                                                  dilation_rate=self.args.dilation_rate_posterior_encoder,
-                                                  num_layers=self.args.num_layers_posterior_encoder,
-                                                  cond_channels=self.embedded_speaker_dim)
+        self.text_encoder = TextEncoder(
+            self.args.num_chars,
+            self.args.hidden_channels,
+            self.args.hidden_channels,
+            self.args.hidden_channels_ffn_text_encoder,
+            self.args.num_heads_text_encoder,
+            self.args.num_layers_text_encoder,
+            self.args.kernel_size_text_encoder,
+            self.args.dropout_p_text_encoder,
+            language_emb_dim=self.embedded_language_dim,
+        )
 
-        self.duration_predictor = DurationPredictor(in_channels=self.args.hidden_channels,
-                                                    filter_channels=self.args.hidden_channels,
-                                                    kernel_size=self.args.dp_kernel_size,
-                                                    p_dropout=self.args.dropout_dp,
-                                                    gin_channels=self.embedded_speaker_dim)
-
-        self.learnable_upsampling = LearnableUpsampling(d_predictor=self.args.d_predictor,
-                                                        kernel_size=self.args.lu_kernel_size,
-                                                        dropout=self.args.dropout_lu,
-                                                        conv_output_size=self.args.lu_conv_output_size,
-                                                        dim_w=self.args.lu_dim_w,
-                                                        dim_c=self.args.lu_dim_c,
-                                                        max_seq_len=self.args.lu_max_seq_len)
+        self.posterior_encoder = PosteriorEncoder(
+            self.args.out_channels,
+            self.args.hidden_channels,
+            self.args.hidden_channels,
+            kernel_size=self.args.kernel_size_posterior_encoder,
+            dilation_rate=self.args.dilation_rate_posterior_encoder,
+            num_layers=self.args.num_layers_posterior_encoder,
+            cond_channels=self.embedded_speaker_dim,
+        )
 
         self.flow = ResidualCouplingBlocks(
-            channels=self.args.hidden_channels,
-            hidden_channels=self.args.hidden_channels,
+            self.args.hidden_channels,
+            self.args.hidden_channels,
             kernel_size=self.args.kernel_size_flow,
             dilation_rate=self.args.dilation_rate_flow,
             num_layers=self.args.num_layers_flow,
             cond_channels=self.embedded_speaker_dim,
         )
+
+        self.flow = TransformerResidualCouplingBlock(
+            self.args.hidden_channels,
+            self.args.hidden_channels,
+            kernel_size=self.args.kernel_size_flow,
+            dilation_rate=self.args.dilation_rate_flow,
+            num_layers=self.args.num_layers_flow,
+            cond_channels=self.embedded_speaker_dim,
+        )
+
+        if self.args.use_sdp:
+            self.duration_predictor = StochasticDurationPredictor(
+                self.args.hidden_channels,
+                192,
+                3,
+                self.args.dropout_p_duration_predictor,
+                4,
+                cond_channels=self.embedded_speaker_dim if self.args.condition_dp_on_speaker else 0,
+                language_emb_dim=self.embedded_language_dim,
+            )
+        else:
+            self.duration_predictor = DurationPredictor(
+                self.args.hidden_channels,
+                256,
+                3,
+                self.args.dropout_p_duration_predictor,
+                cond_channels=self.embedded_speaker_dim,
+                language_emb_dim=self.embedded_language_dim,
+            )
 
         self.waveform_decoder = HifiganGenerator(
             self.args.hidden_channels,
@@ -697,6 +710,7 @@ class NaturalSpeech(BaseTTS):
                 periods=self.args.periods_multi_period_discriminator,
                 use_spectral_norm=self.args.use_spectral_norm_disriminator,
             )
+        self.mas_noise_scale = self.args.mas_noise_scale
 
     @property
     def device(self):
@@ -844,10 +858,6 @@ class NaturalSpeech(BaseTTS):
         if self.args.freeze_waveform_decoder:
             for param in self.waveform_decoder.parameters():
                 param.requires_grad = False
-        
-        if self.args.freeze_learnable_upsampling:
-            for param in self.learnable_upsampling.parameters():
-                param.requires_grad = False
 
     @staticmethod
     def _set_cond_input(aux_input: Dict):
@@ -885,19 +895,46 @@ class NaturalSpeech(BaseTTS):
         g = speaker_ids if speaker_ids is not None else d_vectors
         return g
 
-    def forward_mas(self, outputs, z_p, m_p, logs_p, x, x_mask, y_mask, g, lang_emb):
+    def forward_mas(self, z_p, m_p, logs_p, x, x_mask, y_mask, g, lang_emb, mas_noise_scale=0.01):
         # find the alignment path
-        attn_mask = torch.unsqueeze(x_mask, -1) * torch.unsqueeze(y_mask, 2)
+        """
+        z_p: [b, d, t_spec]
+        m_p: [b, d, t_text]
+        logs_p: [b, d, t_text]
+        x: [b, t_text]
+        x_mask: [b, 1, t_text]
+        y_mask: [b, 1, t_spec]
+        """
+        attn_mask = torch.unsqueeze(x_mask, -1) * torch.unsqueeze(y_mask, 2)  # [b, 1, t_text, t_spec]
         with torch.no_grad():
-            o_scale = torch.exp(-2 * logs_p)
-            logp1 = torch.sum(-0.5 * math.log(2 * math.pi) - logs_p, [1]).unsqueeze(-1)  # [b, t, 1]
-            logp2 = torch.einsum("klm, kln -> kmn", [o_scale, -0.5 * (z_p**2)])
-            logp3 = torch.einsum("klm, kln -> kmn", [m_p * o_scale, z_p])
-            logp4 = torch.sum(-0.5 * (m_p**2) * o_scale, [1]).unsqueeze(-1)  # [b, t, 1]
-            logp = logp2 + logp3 + logp1 + logp4
-            attn = maximum_path(logp, attn_mask.squeeze(1)).detach()  # [b, t, t']
-            gt_durations = attn.sum(-1)  # [b, t]
-        return gt_durations, attn
+            o_scale = torch.exp(-2 * logs_p)  # [b, d, t_text]
+            logp1 = torch.sum(-0.5 * math.log(2 * math.pi) - logs_p, [1]).unsqueeze(-1)  # [b, t_text, 1]
+            logp2 = torch.einsum("klm, kln -> kmn", [o_scale, -0.5 * (z_p**2)])  # [b, t_text, t_spec]
+            logp3 = torch.einsum("klm, kln -> kmn", [m_p * o_scale, z_p])  # [b, t_text, t_spec]
+            logp4 = torch.sum(-0.5 * (m_p**2) * o_scale, [1]).unsqueeze(-1)  # [b, t_text, 1]
+            logp = logp2 + logp3 + logp1 + logp4  # [b, t_text, t_spec]
+            if mas_noise_scale > 0:
+                eps = torch.std(logp) * torch.randn_like(logp) * mas_noise_scale
+                logp = logp + eps  # [b, t_text, t_spec]
+            attn = maximum_path(logp, attn_mask.squeeze(1)).unsqueeze(1).detach()  # [b, 1, t_text, t_spec]
+        return attn
+
+    def upsampling_z(self, z, slice_ids=None, y_lengths=None, y_mask=None):
+        spec_segment_size = self.spec_segment_size
+        if self.args.encoder_sample_rate:
+            # recompute the slices and spec_segment_size if needed
+            slice_ids = slice_ids * int(self.interpolate_factor) if slice_ids is not None else slice_ids
+            spec_segment_size = spec_segment_size * int(self.interpolate_factor)
+            # interpolate z if needed
+            if self.args.interpolate_z:
+                z = torch.nn.functional.interpolate(z, scale_factor=[self.interpolate_factor], mode="linear").squeeze(0)
+                # recompute the mask if needed
+                if y_lengths is not None and y_mask is not None:
+                    y_mask = (
+                        sequence_mask(y_lengths * self.interpolate_factor, None).to(y_mask.dtype).unsqueeze(1)
+                    )  # [B, 1, T_dec_resampled]
+
+        return z, spec_segment_size, slice_ids, y_mask
 
     def forward(  # pylint: disable=dangerous-default-value
         self,
@@ -933,7 +970,17 @@ class NaturalSpeech(BaseTTS):
             - language_ids: :math:`[B]`
 
         Return Shapes:
-
+            - model_outputs: :math:`[B, 1, T_wav]`
+            - alignments: :math:`[B, T_seq, T_dec]`
+            - z: :math:`[B, C, T_dec]`
+            - z_p: :math:`[B, C, T_dec]`
+            - m_p: :math:`[B, C, T_dec]`
+            - logs_p: :math:`[B, C, T_dec]`
+            - m_q: :math:`[B, C, T_dec]`
+            - logs_q: :math:`[B, C, T_dec]`
+            - waveform_seg: :math:`[B, 1, spec_seg_size * hop_length]`
+            - gt_spk_emb: :math:`[B, 1, speaker_encoder.proj_dim]`
+            - syn_spk_emb: :math:`[B, 1, speaker_encoder.proj_dim]`
         """
         outputs = {}
         sid, g, lid, _ = self._set_cond_input(aux_input)
@@ -945,77 +992,64 @@ class NaturalSpeech(BaseTTS):
         lang_emb = None
         if self.args.use_language_embedding and lid is not None:
             lang_emb = self.emb_l(lid).unsqueeze(-1)
-        # posterior encoder
-        z, m_q, logs_q, y_mask = self.posterior_encoder(y, y_lengths, g=g)
-        # random segment
-        z_slice, slice_ids = z_slice, slice_ids = rand_segments(z, y_lengths, self.args.spec_segment_size, let_short_samples=True, pad_short=True)
-        # get the coresponding waveform slices
-        gt_seg = segment(waveform,
-                         segment_indices=slice_ids * self.config.audio.hop_length,
-                         segment_size=self.args.spec_segment_size * self.config.audio.hop_length,
-                         pad_short=True,
-                         )
-        # waveform decoder from posterior representation
-        o = self.waveform_decoder(z_slice, g=g)  # [b, 1, t]
-        # flow for posterior
-        z_p = self.flow(z, y_mask, g=g)
-        # text_encoder
-        x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb)
-        # forward mas for compute gt duration
-        gt_d, attn = self.forward_mas(outputs, z_p, m_p, logs_p, x, x_mask, y_mask, g=g, lang_emb=lang_emb)  # [b, t]
-        # duration predictor
-        log_pred_d = self.duration_predictor(x, x_mask, g=g)  # [batch, 1, T]
-        pred_d = torch.exp(log_pred_d) * x_mask  # [batch, 1, T]
-        gt_d_ = gt_d.unsqueeze(1)
-        log_gt_d_ = torch.log(gt_d_ + 1e-6) * x_mask  # [batch, 1, T]
-        duration_loss = torch.sum((log_gt_d_ - log_pred_d) ** 2, dim=[1, 2]) / torch.sum(x_mask)  # mse for duration loss
-        # learnable upsampling
-        if not self.use_gt_duration:
-            gt_d = pred_d.squeeze(1)  # [batch, T]
-        up_rep, p_mask, _, W = self.learnable_upsampling(gt_d,
-                                                         x.transpose(1, 2),
-                                                         x_lengths,
-                                                         ~(x_mask.squeeze(1).bool()),
-                                                         x_lengths.max(),
-                                                         )
-        # up_rep (b, t, d * 2)
-        # split
-        m_p, logs_p = torch.split(up_rep.transpose(1, 2), self.learnable_upsampling.d_predictor, dim=1)
-        z_q = m_p + torch.randn_like(m_p) * torch.exp(logs_p)  # [b, d, t]
-        # flow for up sampled phoneme rep
-        z_q = self.flow(z_q, p_mask.unsqueeze(1), g=g, reverse=True)
-        z_q_lengths = p_mask.flatten(1, -1).sum(dim=-1).long()
-        z_slice_q, slice_ids_q = rand_segments(z_q, torch.minimum(z_q_lengths, y_lengths),
-                                               self.args.spec_segment_size, let_short_samples=True, pad_short=True)
 
-        model_outputs = self.waveform_decoder(z_slice_q, g=g)
-        # get the coresponding waveform slices
-        gt_seg_2 = segment(waveform,
-                           segment_indices=slice_ids_q * self.config.audio.hop_length,
-                           segment_size=self.args.spec_segment_size * self.config.audio.hop_length,
-                           pad_short=True,)
+        z_p_text, m_p_text, logs_p_text, h_text, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb)
+        # posterior encoder
+        z_q_audio, m_q_audio, logs_q_audio, y_mask = self.posterior_encoder(y, y_lengths, g=g)
+        # flow layers
+        z_q_dur, m_q_dur, logs_q_dur = self.flow(z_q_audio, m_q_audio, logs_q_audio, y_mask, g=g)
+
+        # duration predictor
+        attn = self.forward_mas(z_q_dur, m_p_text, logs_p_text, x, x_mask, y_mask, g=g,
+                                lang_emb=lang_emb, mas_noise_scale=self.mas_noise_scale)
+
+        w = attn.sum(3)  # [B, 1, t_text]
+        if self.args.use_sdp:
+            l_length = self.duration_predictor(h_text, x_mask, w, g=g)
+            l_length = l_length / torch.sum(x_mask)
+        else:
+            logw_ = torch.log(w + 1e-6) * x_mask
+            logw = self.dp(h_text.detach(), x_mask, g=g)
+            l_length = torch.sum((logw - logw_) ** 2, [1, 2]) / torch.sum(x_mask)
+
+        # expand prior
+        m_p_dur = torch.einsum("klmn, kjm -> kjn", [attn, m_p_text])  # [batch, 1, t_text, t_spec] x [batch, d, t_text] -> [batch, d, t_spec]
+        logs_p_dur = torch.einsum("klmn, kjm -> kjn", [attn, logs_p_text])  # [batch, 1, t_text, t_spec] x [batch, d, t_text] -> [batch, d, t_spec]
+        z_p_dur = m_p_dur + torch.exp(logs_p_dur) * torch.randn_like(m_p_dur)  # [batch, d, t_spec]
+        z_p_audio, m_p_audio, logsp_audio = self.flow(z_p_dur, m_p_dur, logs_p_dur, y_mask, g=g, reverse=True)
+
+        # select a random feature segment for the waveform decoder
+        z_slice, slice_ids = rand_segments(z_q_audio, y_lengths, self.spec_segment_size, let_short_samples=True, pad_short=True)
+
+        # interpolate z if needed
+        # z_slice, spec_segment_size, slice_ids, _ = self.upsampling_z(z_slice, slice_ids=slice_ids)
+
+        o = self.waveform_decoder(z_slice, g=g)
+        wav_seg = segment(
+            waveform,
+            slice_ids * self.config.audio.hop_length,
+            self.spec_segment_size * self.config.audio.hop_length,
+            pad_short=True,
+        )
+
         outputs.update(
             {
-                "o": o,  # predicted waveform [b, 1, t] from posterior
-                "gt_seg": gt_seg,  # ground truth waveform segments corresponding to o
-                "duration_loss": duration_loss,  # duration loss
-                "alignments": attn,
-                "slice_ids": slice_ids,  # posterior slice ids
+                "model_outputs": o,
+                "alignments": attn.squeeze(1),
+                "slice_ids": slice_ids,
                 "x_mask": x_mask,
                 "y_mask": y_mask,
-                "z": z,
-                "z_p": z_p,
-                "m_p": m_p,
-                "logs_p": logs_p,
-                "m_q": m_q,
-                "logs_q": logs_q,
-                "p_mask": p_mask,
-                "W": W,
-                "model_outputs": model_outputs,  # predicted waveform e2e (text -> duration -> upsample -> flow -> decoder)
-                "gt_seg_2": gt_seg_2,  # ground truth waveform segments corresponding to model_outputs
-                "z_q": z_q,
-                "gt_d": gt_d,
-                "slice_ids_q": slice_ids_q,  # slice ids from upsamled phoneme representation
+                "m_p_text": m_p_text,
+                "logs_p_text": logs_p_text,
+                "m_p_dur": m_p_dur,
+                "logs_p_dur": logs_p_dur,
+                "z_q_dur": z_q_dur,
+                "logs_q_dur": logs_q_dur,
+                "m_p_audio": m_p_audio,
+                "logs_p_audio": logsp_audio,
+                "m_q_audio": m_q_audio,
+                "logs_q_audio": logs_q_audio,
+                "waveform_seg": wav_seg,
             }
         )
         return outputs
@@ -1027,8 +1061,11 @@ class NaturalSpeech(BaseTTS):
         return torch.tensor(x.shape[1:2]).to(x.device)
 
     @torch.no_grad()
-    def inference(self, x, aux_input={"x_lengths": None, "d_vectors": None, "speaker_ids": None, "language_ids": None, "durations": None}):
-        # pylint: disable=dangerous-default-value
+    def inference(
+        self,
+        x,
+        aux_input={"x_lengths": None, "d_vectors": None, "speaker_ids": None, "language_ids": None, "durations": None},
+    ):  # pylint: disable=dangerous-default-value
         """
         Note:
             To run in batch mode, provide `x_lengths` else model assumes that the batch size is 1.
@@ -1055,35 +1092,90 @@ class NaturalSpeech(BaseTTS):
             g = self.emb_g(sid).unsqueeze(-1)
 
         # language embedding
-        lang_emb = None
-        if self.args.use_language_embedding and lid is not None:
-            lang_emb = self.emb_l(lid).unsqueeze(-1)
+        z_p_text, m_p_text, logs_p_text, h_text, x_mask = self.enc_p(x, x_lengths, g=g)
+        if self.args.use_sdp:
+            logw = self.dp(h_text, x_mask, g=g, reverse=True, noise_scale=self.inference_noise_scale_dp)
+        else:
+            logw = self.dp(h_text, x_mask, g=g)
+        w = torch.exp(logw) * x_mask * self.length_scale
+        w_ceil = torch.ceil(w)
+        y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
+        y_mask = sequence_mask(y_lengths, None).to(x_mask.dtype).unsqueeze(1)
+        attn_mask = x_mask * y_mask.transpose(1, 2)  # [B, 1, T_enc] * [B, T_dec, 1]
+        attn = generate_path(w_ceil.squeeze(1), attn_mask.squeeze(1).transpose(1, 2))
 
-        # text encoder
-        x, _, _, x_mask = self.text_encoder(x, x_lengths, lang_emb=lang_emb)
-        log_pred_d = self.duration_predictor(x, x_mask, g=g)
-        pred_d = torch.exp(log_pred_d) * x_mask  # [b, 1 , t]
-        up_rep, p_mask, _, W = self.learnable_upsampling(pred_d.squeeze(1),
-                                                         x.transpose(1, 2),
-                                                         x_lengths,
-                                                         ~(x_mask.squeeze(1).bool()),
-                                                         x_mask.shape[-1],)
-        p_mask = ~p_mask
-        m_p, logs_p = torch.split(up_rep.transpose(1, 2), self.learnable_upsampling.d_predictor, dim=1)
-        z_q = m_p + torch.rand_like(m_p) * torch.exp(logs_p)
-        y_mask = p_mask.unsqueeze(1)
-        z = self.flow(z_q, y_mask, g=g, reverse=True)
-        o = self.waveform_decoder((z * y_mask)[:, :, :None], g=g)
+        m_p_dur = torch.matmul(attn.transpose(1, 2), m_p_text.transpose(1, 2)).transpose(1, 2)
+        logs_p_dur = torch.matmul(attn.transpose(1, 2), logs_p_text.transpose(1, 2)).transpose(1, 2)
+        z_p_dur = m_p_dur + torch.randn_like(m_p_dur) * torch.exp(logs_p_dur) * self.inference_noise_scale
+        z_p_audio, m_p_audio, logs_p_audio = self.flow(z_p_dur, m_p_dur, logs_p_dur, y_mask, g=g, reverse=True)
+        o = self.waveform_decoder((z_p_audio * y_mask)[:, :, : self.max_inference_len], g=g)
         outputs = {
             "model_outputs": o,
-            "alignments": None,
+            "alignments": attn.squeeze(1),
+            "z_p_dur": z_p_dur,
+            "m_p_dur": m_p_dur,
+            "logs_p_dur": logs_p_dur,
+            "z_p_audio": z_p_audio,
+            "m_p_audio": m_p_audio,
+            "logs_p_audio": logs_p_audio,
             "y_mask": y_mask,
-            "z": z,
-            "z_q": z_q,
-            "m_p": m_p,
-            "logs_p": logs_p
         }
         return outputs
+
+    @torch.no_grad()
+    def inference_voice_conversion(
+        self, reference_wav, speaker_id=None, d_vector=None, reference_speaker_id=None, reference_d_vector=None
+    ):
+        """Inference for voice conversion
+
+        Args:
+            reference_wav (Tensor): Reference wavform. Tensor of shape [B, T]
+            speaker_id (Tensor): speaker_id of the target speaker. Tensor of shape [B]
+            d_vector (Tensor): d_vector embedding of target speaker. Tensor of shape `[B, C]`
+            reference_speaker_id (Tensor): speaker_id of the reference_wav speaker. Tensor of shape [B]
+            reference_d_vector (Tensor): d_vector embedding of the reference_wav speaker. Tensor of shape `[B, C]`
+        """
+        # compute spectrograms
+        y = wav_to_spec(
+            reference_wav,
+            self.config.audio.fft_size,
+            self.config.audio.hop_length,
+            self.config.audio.win_length,
+            center=False,
+        )
+        y_lengths = torch.tensor([y.size(-1)]).to(y.device)
+        speaker_cond_src = reference_speaker_id if reference_speaker_id is not None else reference_d_vector
+        speaker_cond_tgt = speaker_id if speaker_id is not None else d_vector
+        wav, _, _ = self.voice_conversion(y, y_lengths, speaker_cond_src, speaker_cond_tgt)
+        return wav
+
+    def voice_conversion(self, y, y_lengths, speaker_cond_src, speaker_cond_tgt):
+        """Forward pass for voice conversion
+
+        TODO: create an end-point for voice conversion
+
+        Args:
+            y (Tensor): Reference spectrograms. Tensor of shape [B, T, C]
+            y_lengths (Tensor): Length of each reference spectrogram. Tensor of shape [B]
+            speaker_cond_src (Tensor): Reference speaker ID. Tensor of shape [B,]
+            speaker_cond_tgt (Tensor): Target speaker ID. Tensor of shape [B,]
+        """
+        assert self.num_speakers > 0, "num_speakers have to be larger than 0."
+        # speaker embedding
+        if self.args.use_speaker_embedding and not self.args.use_d_vector_file:
+            g_src = self.emb_g(torch.from_numpy((np.array(speaker_cond_src))).unsqueeze(0)).unsqueeze(-1)
+            g_tgt = self.emb_g(torch.from_numpy((np.array(speaker_cond_tgt))).unsqueeze(0)).unsqueeze(-1)
+        elif not self.args.use_speaker_embedding and self.args.use_d_vector_file:
+            g_src = F.normalize(speaker_cond_src).unsqueeze(-1)
+            g_tgt = F.normalize(speaker_cond_tgt).unsqueeze(-1)
+        else:
+            raise RuntimeError(" [!] Voice conversion is only supported on multi-speaker models.")
+
+        z, _, _, y_mask = self.posterior_encoder(y, y_lengths, g=g_src)
+        z_p = self.flow(z, y_mask, g=g_src)
+        z_hat = self.flow(z_p, y_mask, g=g_tgt, reverse=True)
+        o_hat = self.waveform_decoder(z_hat * y_mask, g=g_tgt)
+        return o_hat, y_mask, (z, z_p, z_hat)
 
     def train_step(self, batch: dict, criterion: nn.Module, optimizer_idx: int) -> Tuple[Dict, Dict]:
         """Perform a single training step. Run the model forward pass and compute losses.
@@ -1098,11 +1190,12 @@ class NaturalSpeech(BaseTTS):
         """
 
         spec_lens = batch["spec_lens"]
-        # Discriminator
+
         if optimizer_idx == 0:
             tokens = batch["tokens"]
             token_lenghts = batch["token_lens"]
             spec = batch["spec"]
+
             d_vectors = batch["d_vectors"]
             speaker_ids = batch["speaker_ids"]
             language_ids = batch["language_ids"]
@@ -1121,40 +1214,34 @@ class NaturalSpeech(BaseTTS):
             # cache tensors for the generator pass
             self.model_outputs_cache = outputs  # pylint: disable=attribute-defined-outside-init
 
-            # compute scores and features for posterior waveform outputs
+            # compute scores and features
             scores_disc_fake, _, scores_disc_real, _ = self.disc(
-                outputs["o"].detach(), outputs["gt_seg"]
-            )
-            # compute scores and features for e2e waveform outputs
-            scores_disc_fake_e2e, _, scores_disc_real_e2e, _ = self.disc(
-                outputs["model_outputs"].detach(), outputs["gt_seg_2"]
+                outputs["model_outputs"].detach(), outputs["waveform_seg"]
             )
 
-            # compute discriminator loss for posterior
+            # compute loss
             with autocast(enabled=False):  # use float32 for the criterion
                 loss_dict = criterion[optimizer_idx](
                     scores_disc_real,
                     scores_disc_fake,
-                    scores_disc_real_e2e,
-                    scores_disc_fake_e2e
                 )
-
             return outputs, loss_dict
-        # Generator
+
         if optimizer_idx == 1:
             mel = batch["mel"]
+
             # compute melspec segment
             with autocast(enabled=False):
                 if self.args.encoder_sample_rate:
-                    spec_segment_size = self.args.spec_segment_size * int(self.interpolate_factor)
+                    spec_segment_size = self.spec_segment_size * int(self.interpolate_factor)
                 else:
-                    spec_segment_size = self.args.spec_segment_size
+                    spec_segment_size = self.spec_segment_size
 
                 mel_slice = segment(
                     mel.float(), self.model_outputs_cache["slice_ids"], spec_segment_size, pad_short=True
                 )
                 mel_slice_hat = wav_to_mel(
-                    y=self.model_outputs_cache["o"].float(),
+                    y=self.model_outputs_cache["model_outputs"].float(),
                     n_fft=self.config.audio.fft_size,
                     sample_rate=self.config.audio.sample_rate,
                     num_mels=self.config.audio.num_mels,
@@ -1167,11 +1254,7 @@ class NaturalSpeech(BaseTTS):
 
             # compute discriminator scores and features
             scores_disc_fake, feats_disc_fake, _, feats_disc_real = self.disc(
-                self.model_outputs_cache["o"], self.model_outputs_cache["gt_seg"]
-            )
-
-            scores_disc_fake_e2e, _, _, _ = self.disc(
-                self.model_outputs_cache["model_outputs"], self.model_outputs_cache["gt_seg_2"]
+                self.model_outputs_cache["model_outputs"], self.model_outputs_cache["waveform_seg"]
             )
 
             # compute losses
@@ -1179,23 +1262,22 @@ class NaturalSpeech(BaseTTS):
                 loss_dict = criterion[optimizer_idx](
                     mel_slice_hat=mel_slice.float(),
                     mel_slice=mel_slice_hat.float(),
-                    z_p=self.model_outputs_cache["z_p"].float(),
-                    z_q=self.model_outputs_cache["z_q"].float(),
-                    logs_p=self.model_outputs_cache["logs_p"].float(),
-                    logs_q=self.model_outputs_cache["logs_q"].float(),
-                    m_p=self.model_outputs_cache["m_p"].float(),
-                    m_q=self.model_outputs_cache["m_q"].float(),
+                    z_q_dur=self.model_outputs_cache["z_q_dur"].float(),
+                    logs_q_dur=self.model_outputs_cache["logs_q_dur"].float(),
+                    m_p_dur=self.model_outputs_cache["m_p_dur"].float(),
+                    logs_p_dur=self.model_outputs_cache["logs_p_dur"].float(),
+                    m_p_audio=self.model_outputs_cache["m_p_audio"].float(),
+                    logs_p_audio=self.model_outputs_cache["logs_p_audio"].float(),
+                    m_q_audio=self.model_outputs_cache["m_q_audio"].float(),
+                    logs_q_audio=self.model_outputs_cache["logs_q_audio"].float(),
                     z_len=spec_lens,
-                    p_mask=self.model_outputs_cache["p_mask"].float(),
                     scores_disc_fake=scores_disc_fake,
                     feats_disc_fake=feats_disc_fake,
                     feats_disc_real=feats_disc_real,
-                    scores_disc_fake_e2e=scores_disc_fake_e2e,
-                    loss_duration=self.model_outputs_cache["duration_loss"],
+                    loss_duration=self.model_outputs_cache["l_length"],
                     use_speaker_encoder_as_loss=self.args.use_speaker_encoder_as_loss,
-                    gt_spk_emb=None,
-                    syn_spk_emb=None,
-                    use_sdtw=self.use_sdtw
+                    gt_spk_emb=self.model_outputs_cache["gt_spk_emb"],
+                    syn_spk_emb=self.model_outputs_cache["syn_spk_emb"],
                 )
 
             return self.model_outputs_cache, loss_dict
@@ -1204,7 +1286,7 @@ class NaturalSpeech(BaseTTS):
 
     def _log(self, ap, batch, outputs, name_prefix="train"):  # pylint: disable=unused-argument,no-self-use
         y_hat = outputs[1]["model_outputs"]
-        y = outputs[1]["gt_seg_2"]
+        y = outputs[1]["waveform_seg"]
         figures = plot_results(y_hat, y, ap, name_prefix)
         sample_voice = y_hat[0].squeeze(0).detach().cpu().numpy()
         audios = {f"{name_prefix}/audio": sample_voice}
@@ -1324,7 +1406,7 @@ class NaturalSpeech(BaseTTS):
                 do_trim_silence=False,
             ).values()
             test_audios["{}-audio".format(idx)] = wav
-            # test_figures["{}-alignment".format(idx)] = plot_alignment(alignment.T, output_fig=False)
+            test_figures["{}-alignment".format(idx)] = plot_alignment(alignment.T, output_fig=False)
         return {"figures": test_figures, "audios": test_audios}
 
     def test_log(
@@ -1467,7 +1549,7 @@ class NaturalSpeech(BaseTTS):
             loader = None
         else:
             # init dataloader
-            dataset = NaturalSpeechDataset(
+            dataset = Vits2Dataset(
                 model_args=self.args,
                 samples=samples,
                 batch_group_size=0 if is_eval else config.batch_group_size * config.batch_size,
@@ -1527,9 +1609,9 @@ class NaturalSpeech(BaseTTS):
         Returns:
             List: optimizers.
         """
+        # select generator parameters
         optimizer0 = get_optimizer(self.config.optimizer, self.config.optimizer_params, self.config.lr_disc, self.disc)
 
-        # select generator parameters
         gen_parameters = chain(params for k, params in self.named_parameters() if not k.startswith("disc."))
         optimizer1 = get_optimizer(
             self.config.optimizer, self.config.optimizer_params, self.config.lr_gen, parameters=gen_parameters
@@ -1561,11 +1643,11 @@ class NaturalSpeech(BaseTTS):
         """Get criterions for each optimizer. The index in the output list matches the optimizer idx used in
         `train_step()`"""
         from TTS.tts.layers.losses import (  # pylint: disable=import-outside-toplevel
-            NaturalSpeechDiscriminatorLoss,
-            NaturalSpeechGeneratorLoss,
+            Vits2DiscriminatorLoss,
+            Vits2GeneratorLoss,
         )
 
-        return [NaturalSpeechDiscriminatorLoss(self.config), NaturalSpeechGeneratorLoss(self.config)]
+        return [Vits2DiscriminatorLoss(self.config), Vits2GeneratorLoss(self.config)]
 
     def load_checkpoint(
         self, config, checkpoint_path, eval=False, strict=True, cache=False
@@ -1673,7 +1755,7 @@ class NaturalSpeech(BaseTTS):
             speaker_manager.init_encoder(
                 config.model_args.speaker_encoder_model_path, config.model_args.speaker_encoder_config_path
             )
-        return NaturalSpeech(new_config, ap, tokenizer, speaker_manager, language_manager)
+        return Vits(new_config, ap, tokenizer, speaker_manager, language_manager)
 
     def export_onnx(self, output_path: str = "coqui_vits.onnx", verbose: bool = True):
         """Export model to ONNX format for inference
@@ -1798,35 +1880,24 @@ class NaturalSpeech(BaseTTS):
         return audio[0][0]
 
 
-def create_phonemes_list(dict_phonemes_json: str) -> List[str]:
-    dict_phoneme = json.load(open(dict_phonemes_json, "r", encoding="utf-8"))
-    all_phonemes = []
-    for key, values in dict_phoneme.items():
-        phonemes = values.split(" ")
-        for phoneme in phonemes:
-            if phoneme not in all_phonemes:
-                all_phonemes.append(phoneme)
-    return sorted(all_phonemes)
+##################################
+# VITS CHARACTERS
+##################################
 
 
-class NaturalSpeechCharacters(BaseCharacters):
+class Vits2Characters(BaseCharacters):
     """Characters class for VITs model for compatibility with pre-trained models"""
 
     def __init__(
         self,
-        graphemes: str = None,
-        dict_phonemes_json: str = None,
+        graphemes: str = _vi_characters,
         punctuations: str = _punctuations,
         pad: str = _pad,
-        eos: str = _eos,
-        bos: str = _bos,
         ipa_characters: str = None,
     ) -> None:
-        graphemes = create_phonemes_list(dict_phonemes_json)
         if ipa_characters is not None:
             graphemes += ipa_characters
-        super().__init__(graphemes, punctuations, pad, eos, bos, "<BLNK>", is_unique=False, is_sorted=True)
-        self._characters = graphemes
+        super().__init__(graphemes, punctuations, pad, None, None, "<BLNK>", is_unique=False, is_sorted=True)
 
     def _create_vocab(self):
         self._vocab = [self._pad] + list(self._punctuations) + list(self._characters) + [self._blank]
@@ -1842,10 +1913,10 @@ class NaturalSpeechCharacters(BaseCharacters):
             _letters = config.characters["characters"]
             _letters_ipa = config.characters["phonemes"]
             return (
-                NaturalSpeechCharacters(graphemes=_letters, ipa_characters=_letters_ipa, punctuations=_punctuations, pad=_pad),
+                Vits2Characters(graphemes=_letters, ipa_characters=_letters_ipa, punctuations=_punctuations, pad=_pad),
                 config,
             )
-        characters = NaturalSpeechCharacters()
+        characters = Vits2Characters()
         new_config = replace(config, characters=characters.to_config())
         return characters, new_config
 
@@ -1861,3 +1932,22 @@ class NaturalSpeechCharacters(BaseCharacters):
             is_sorted=True,
         )
 
+
+class FairseqVocab(BaseVocabulary):
+    def __init__(self, vocab: str):
+        super(FairseqVocab).__init__()
+        self.vocab = vocab
+
+    @property
+    def vocab(self):
+        """Return the vocabulary dictionary."""
+        return self._vocab
+
+    @vocab.setter
+    def vocab(self, vocab_file):
+        with open(vocab_file, encoding="utf-8") as f:
+            self._vocab = [x.replace("\n", "") for x in f.readlines()]
+        self.blank = self._vocab[0]
+        self.pad = " "
+        self._char_to_id = {s: i for i, s in enumerate(self._vocab)}  # pylint: disable=unnecessary-comprehension
+        self._id_to_char = {i: s for i, s in enumerate(self._vocab)}  # pylint: disable=unnecessary-comprehension
