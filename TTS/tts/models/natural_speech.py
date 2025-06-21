@@ -31,7 +31,7 @@ from TTS.tts.utils.helpers import generate_path, maximum_path, rand_segments, se
 from TTS.tts.utils.languages import LanguageManager
 from TTS.tts.utils.speakers import SpeakerManager
 from TTS.tts.utils.synthesis import synthesis
-from TTS.tts.utils.text.characters import BaseCharacters, BaseVocabulary, _characters, _pad, _phonemes, _punctuations, _eos, _bos
+from TTS.tts.utils.text.characters import BaseCharacters, BaseVocabulary, _vi_characters, _pad, _phonemes, _punctuations, _eos, _bos
 from TTS.tts.utils.text.tokenizer import TTSTokenizer
 from TTS.tts.utils.visual import plot_alignment
 from TTS.utils.io import load_fsspec
@@ -1814,15 +1814,13 @@ class NaturalSpeechCharacters(BaseCharacters):
 
     def __init__(
         self,
-        graphemes: str = None,
-        dict_phonemes_json: str = None,
+        graphemes: str = _vi_characters,
         punctuations: str = _punctuations,
         pad: str = _pad,
         eos: str = _eos,
         bos: str = _bos,
         ipa_characters: str = None,
     ) -> None:
-        graphemes = create_phonemes_list(dict_phonemes_json)
         if ipa_characters is not None:
             graphemes += ipa_characters
         super().__init__(graphemes, punctuations, pad, eos, bos, "<BLNK>", is_unique=False, is_sorted=True)

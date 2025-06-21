@@ -8,21 +8,14 @@ from TTS.tts.models.natural_speech import (NaturalSpeech,
                                            NaturalSpeechAudioConfig,
                                            NaturalSpeechArgs,
                                            NaturalSpeechCharacters)
-from TTS.tts.utils.text.phonemizers.vi_phonemizer import ViPhonemizer
+from TTS.tts.utils.text.cleaners import english_cleaners
 from TTS.tts.utils.speakers import SpeakerManager
 from TTS.tts.utils.text.tokenizer import TTSTokenizer
 from TTS.utils.audio import AudioProcessor
 
 
-def build_characters(graphemes: str = None,
-                     dict_phonemes_json: str = None,
-                     punctuations: str = None,
-                     pad: str = None,
-                     eos: str = None,
-                     bos: str = None,
-                     ipa_characters: str = None,):
-    ns_charaters = NaturalSpeechCharacters(graphemes=graphemes,
-                                           dict_phonemes_json=dict_phonemes_json)
+def build_characters():
+    ns_charaters = NaturalSpeechCharacters()
     return ns_charaters
 
 
@@ -34,7 +27,7 @@ def get_configs(args):
                                        path=args.dataset_path)
 
     # Audio config
-    audio_config = NaturalSpeechAudioConfig(sample_rate=22050,
+    audio_config = NaturalSpeechAudioConfig(sample_rate=16000,
                                             win_length=1024,
                                             hop_length=256,
                                             num_mels=80,
@@ -64,7 +57,7 @@ def get_configs(args):
         test_delay_epochs=-1,
         epochs=args.epochs,
         text_cleaner="english_cleaners",
-        use_phonemes=True,
+        use_phonemes=False,
         phoneme_language="vi",
         phoneme_cache_path=os.path.join(args.output_path, "phoneme_cache"),
         compute_input_seq_cache=True,
@@ -80,10 +73,9 @@ def get_configs(args):
 def build_tokenizer(model_config, characters):
     # Tokenizer is used to convert text to sequences of token IDs.
     # config is updated with the default characters if not defined in the config.
-    phomizer = ViPhonemizer()
     tokenizer = TTSTokenizer(use_phonemes=model_config.use_phonemes,
+                             text_cleaner=english_cleaners,
                              characters=characters,
-                             phonemizer=phomizer,
                              use_eos_bos=False)
     return tokenizer
 
@@ -101,7 +93,7 @@ def get_train_val_samples(dataset_config,
 def main(args):
     dataset_config, model_config = get_configs(args)
     audio_processor = AudioProcessor.init_from_config(model_config)
-    characters = build_characters(dict_phonemes_json=args.dict_phonemes_json,)
+    characters = build_characters()
     tokenizer = build_tokenizer(model_config, characters)
     train_samples, eval_samples = get_train_val_samples(dataset_config, model_config)
     if args.multi_spk:
@@ -159,5 +151,4 @@ if __name__ == "__main__":
     main(args)
     print("Training completed successfully.")
     print("Model saved to:", args.output_path)
-
 
