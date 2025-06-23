@@ -34,15 +34,54 @@ def get_configs(args):
                                     mel_fmin=0,
                                     mel_fmax=None)
 
-    # model args
-    vits2_args = Vits2Args()
     # model config
+    if not args.finetune:
+        kl_loss_alpha_dur = 1.0
+        kl_loss_alpha_audio = 1.0
+        disc_loss_alpha = 1.0
+        e2e_disc_loss_alpha = 0.0
+        gen_loss_alpha = 1.0
+        gen_e2e_loss_alpha = 0.0
+        feat_loss_alpha = 1.0
+        mel_loss_alpha = 45.0
+        dur_loss_alpha = 1.0
+    else:
+        kl_loss_alpha_dur = 0.0
+        kl_loss_alpha_audio = 0.0
+        disc_loss_alpha = 0.0
+        e2e_disc_loss_alpha = 1.0
+        gen_loss_alpha = 0.0
+        gen_e2e_loss_alpha = 1.0
+        feat_loss_alpha = 0.0
+        mel_loss_alpha = 0.0
+        dur_loss_alpha = 0.0
+        freeze_encoder = True
+        freeze_PE = True
+        freeze_flow_decoder = True
+        freeze_waveform_decoder = True
+
+    #  model args
+    vits2_args = Vits2Args(freeze_encoder=freeze_encoder,
+                           freeze_PE=freeze_PE,
+                           freeze_flow_decoder=freeze_flow_decoder,
+                           freeze_waveform_decoder=freeze_waveform_decoder)
     model_config = Vits2Config(
         model_args=vits2_args,
         audio=audio_config,
         run_name="vits2_vietnamese",
         batch_size=args.batch_size,
         eval_batch_size=args.eval_batch_size,
+        lr_disc=args.lr,
+        lr_gen=args.lr,
+        kl_loss_alpha_dur=kl_loss_alpha_dur,
+        kl_loss_alpha_audio=kl_loss_alpha_audio,
+        disc_loss_alpha=disc_loss_alpha,
+        e2e_disc_loss_alpha=e2e_disc_loss_alpha,
+        gen_loss_alpha=gen_loss_alpha,
+        gen_e2e_loss_alpha=gen_e2e_loss_alpha,
+        feat_loss_alpha=feat_loss_alpha,
+        mel_loss_alpha=mel_loss_alpha,
+        dur_loss_alpha=dur_loss_alpha,
         batch_group_size=args.batch_group_size,
         num_loader_workers=args.num_loader_workers,
         num_eval_loader_workers=args.num_eval_loader_workers,
@@ -59,7 +98,7 @@ def get_configs(args):
         mixed_precision=False,
         max_text_len=325,  # change this if you have a larger VRAM than 16GB
     )
-    # print(model_config.kl_loss_fwd_alpha)
+
     return dataset_config, model_config
 
 
@@ -119,6 +158,7 @@ if __name__ == "__main__":
     parser.add_argument("--formatter", type=str, default="ns_female", help="dataset formatter")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
     parser.add_argument("--eval_batch_size", type=int, default=16, help="Batch size for evaluation")
+    parser.add_argument("--lr", type=float, default=1.9e-4, help="Learning rate for training")
     parser.add_argument("--batch_group_size", type=int, default=16,
                         help="Batch group size for training")
     parser.add_argument("--num_loader_workers", type=int, default=4,
@@ -138,6 +178,7 @@ if __name__ == "__main__":
                         help="Path to the phoneme dictionary JSON file",
                         default='TTS/TTS/tts/utils/text/vietnamese/dict_phoneme.json')
     parser.add_argument("--gpu", type=str, default="0", help="GPU to use for training")
+    parser.add_argument("--finetune", action='store_true', help="finetune or train from scratch")
     parser.add_argument("--multi_spk", action='store_true')
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu

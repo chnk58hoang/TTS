@@ -34,19 +34,50 @@ def get_configs(args):
                                             mel_fmin=0,
                                             mel_fmax=None)
 
-    # model args
-    ns_args = NaturalSpeechArgs()
     if args.warm_up:
+        kl_loss_alpha = 1.0
         kl_loss_fwd_alpha = 0.0
-        print("done true")
+        gen_loss_alpha = 1.0
+        gen_e2e_loss_alpha = 0.0
+        feat_loss_alpha = 1.0
+        dur_loss_alpha = 5.0
+        mel_loss_alpha = 45.0
+        disc_loss_alpha = 1.0
+        e2e_disc_loss_alpha = 1.0
+
     else:
+        kl_loss_alpha = 0.0
         kl_loss_fwd_alpha = 1.0e-3
-        print("done false")
+        gen_loss_alpha = 0.0
+        gen_e2e_loss_alpha = 1.0
+        feat_loss_alpha = 0.0
+        dur_loss_alpha = 0.0
+        mel_loss_alpha = 0.0
+        disc_loss_alpha = 0.0
+        e2e_disc_loss_alpha: float = 1.0
+        freeze_encoder = True
+        freeze_PE = True
+        freeze_flow_decoder = True
+        freeze_waveform_decoder = True
+
+     # model args
+    ns_args = NaturalSpeechArgs(freeze_encoder=freeze_encoder,
+                                freeze_PE=freeze_PE,
+                                freeze_flow_decoder=freeze_flow_decoder,
+                                freeze_waveform_decoder=freeze_waveform_decoder)
     # model config
     model_config = NaturalSpeechConfig(
         model_args=ns_args,
         audio=audio_config,
+        kl_loss_alpha=kl_loss_alpha,
         kl_loss_fwd_alpha=kl_loss_fwd_alpha,
+        gen_loss_alpha=gen_loss_alpha,
+        gen_e2e_loss_alpha=gen_e2e_loss_alpha,
+        feat_loss_alpha=feat_loss_alpha,
+        dur_loss_alpha=dur_loss_alpha,
+        mel_loss_alpha=mel_loss_alpha,
+        disc_loss_alpha=disc_loss_alpha,
+        e2e_disc_loss_alpha=e2e_disc_loss_alpha,
         run_name="naturalspeech_vietnamese",
         batch_size=args.batch_size,
         eval_batch_size=args.eval_batch_size,

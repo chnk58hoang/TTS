@@ -1005,13 +1005,12 @@ class Vits2(BaseTTS):
 
         w = attn.sum(3)  # [B, 1, t_text]
         if self.args.use_sdp:
-            l_length = self.duration_predictor(h_text, x_mask, w, g=g)
-            l_length = l_length / torch.sum(x_mask)
+            log_w_ = self.duration_predictor(h_text, x_mask, w, g=g)
+            l_length = log_w_ / torch.sum(x_mask)
         else:
-            logw_ = torch.log(w + 1e-6) * x_mask
-            logw = self.dp(h_text.detach(), x_mask, g=g)
+            logw = torch.log(w + 1e-6) * x_mask
+            logw_ = self.duration_predictor(h_text.detach(), x_mask, g=g)
             l_length = torch.sum((logw - logw_) ** 2, [1, 2]) / torch.sum(x_mask)
-
         # expand prior
         m_p_dur = torch.einsum("klmn, kjm -> kjn", [attn, m_p_text])  # [batch, 1, t_text, t_spec] x [batch, d, t_text] -> [batch, d, t_spec]
         logs_p_dur = torch.einsum("klmn, kjm -> kjn", [attn, logs_p_text])  # [batch, 1, t_text, t_spec] x [batch, d, t_text] -> [batch, d, t_spec]
@@ -1032,9 +1031,36 @@ class Vits2(BaseTTS):
             pad_short=True,
         )
 
+        # e2e flow
+        w_ = torch.exp(logw_) * x_mask * self.length_scale  # [B, 1, t_text]
+        w_ceil_ = torch.ceil(w_)
+        y_pred_lengths = torch.clamp_min(torch.sum(w_ceil_, [1, 2]), 1).long()
+        y_pred_mask = sequence_mask(y_pred_lengths, None).to(x_mask.dtype).unsqueeze(1)
+        pred_attn_mask = x_mask * y_pred_mask.transpose(1, 2)  # [B, 1, T_enc] * [B, T_dec, 1]
+        pred_attn = generate_path(w_ceil_.squeeze(1), pred_attn_mask.squeeze(1).transpose(1, 2))
+        m_p_dur_e2e = torch.einsum("klmn, kjm -> kjn", [pred_attn, m_p_text])  # [batch, 1, t_text, t_spec] x [batch, d, t_text] -> [batch, d, t_spec]
+        logs_p_dur_e2e = torch.einsum("klmn, kjm -> kjn", [pred_attn, logs_p_text])  # [batch, 1, t_text, t_spec] x [batch, d, t_text] -> [batch, d, t_spec]
+        z_p_dur_e2e = m_p_dur_e2e + torch.exp(logs_p_dur_e2e) * torch.randn_like(m_p_dur_e2e)
+        z_p_audio_e2e, m_p_audio_e2e, logsp_audio_e2e = self.flow(z_p_dur_e2e,
+                                                                  m_p_dur_e2e,
+                                                                  logs_p_dur_e2e,
+                                                                  y_pred_mask,
+                                                                  g=g, reverse=True)
+        _, slice_ids_e2e = rand_segments(z_p_audio_e2e,
+                                         torch.minimum(y_pred_lengths, y_lengths),
+                                         self.spec_segment_size,
+                                         let_short_samples=True,
+                                         pad_short=True)
+        waveform_seg_e2e = segment(waveform,
+                                   segment_indices=slice_ids_e2e * self.config.audio.hop_length,
+                                   segment_size=self.spec_segment_size * self.config.audio.hop_length,
+                                   pad_short=True)
+        o_e2e = self.waveform_decoder((z_p_audio_e2e * y_pred_mask)[:, :, : self.max_inference_len], g=g)
+
         outputs.update(
             {
                 "model_outputs": o,
+                "model_outputs_e2e": o_e2e,
                 "alignments": attn.squeeze(1),
                 "slice_ids": slice_ids,
                 "x_mask": x_mask,
@@ -1051,6 +1077,7 @@ class Vits2(BaseTTS):
                 "logs_q_audio": logs_q_audio,
                 "l_length": l_length,
                 "waveform_seg": wav_seg,
+                "waveform_seg_e2e": waveform_seg_e2e,
             }
         )
         return outputs
@@ -1219,12 +1246,18 @@ class Vits2(BaseTTS):
             scores_disc_fake, _, scores_disc_real, _ = self.disc(
                 outputs["model_outputs"].detach(), outputs["waveform_seg"]
             )
+            # compute scores and features for e2e waveform outputs
+            scores_disc_fake_e2e, _, scores_disc_real_e2e, _ = self.disc(
+                outputs["model_outputs_e2e"].detach(), outputs["waveform_seg_e2e"]
+            )
 
             # compute loss
             with autocast(enabled=False):  # use float32 for the criterion
                 loss_dict = criterion[optimizer_idx](
                     scores_disc_real,
                     scores_disc_fake,
+                    scores_disc_real_e2e,
+                    scores_disc_fake_e2e,
                 )
             return outputs, loss_dict
 
@@ -1257,6 +1290,9 @@ class Vits2(BaseTTS):
             scores_disc_fake, feats_disc_fake, _, feats_disc_real = self.disc(
                 self.model_outputs_cache["model_outputs"], self.model_outputs_cache["waveform_seg"]
             )
+            scores_disc_fake_e2e, _, _, _ = self.disc(
+                self.model_outputs_cache["model_outputs_e2e"], self.model_outputs_cache["waveform_seg_e2e"]
+            )
 
             # compute losses
             with autocast(enabled=False):  # use float32 for the criterion
@@ -1275,6 +1311,7 @@ class Vits2(BaseTTS):
                     scores_disc_fake=scores_disc_fake,
                     feats_disc_fake=feats_disc_fake,
                     feats_disc_real=feats_disc_real,
+                    scores_disc_fake_e2e=scores_disc_fake_e2e,
                     loss_duration=self.model_outputs_cache["l_length"],
                     use_speaker_encoder_as_loss=self.args.use_speaker_encoder_as_loss,
                     # gt_spk_emb=self.model_outputs_cache["gt_spk_emb"],

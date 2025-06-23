@@ -127,7 +127,9 @@ class Vits2Config(BaseTTSConfig):
     kl_loss_alpha_dur: float = 1.0
     kl_loss_alpha_audio: float = 1.0
     disc_loss_alpha: float = 1.0
+    e2e_disc_loss_alpha: float = 1.0
     gen_loss_alpha: float = 1.0
+    gen_e2e_loss_alpha: float = 1.0
     feat_loss_alpha: float = 1.0
     mel_loss_alpha: float = 45.0
     dur_loss_alpha: float = 1.0
