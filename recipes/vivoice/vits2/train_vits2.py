@@ -46,6 +46,10 @@ def get_configs(args):
         feat_loss_alpha = 1.0
         mel_loss_alpha = 45.0
         dur_loss_alpha = 1.0
+        freeze_encoder = False
+        freeze_PE = False
+        freeze_flow_decoder = False
+        freeze_waveform_decoder = False
     else:
         kl_loss_alpha_dur = 0.0
         kl_loss_alpha_audio = 0.0
