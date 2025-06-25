@@ -39,7 +39,7 @@ def get_configs(args):
         kl_loss_alpha = 1.0
         kl_loss_fwd_alpha = 0.0
         gen_loss_alpha = 1.0
-        gen_e2e_loss_alpha = 0.0
+        gen_e2e_loss_alpha = 1.0
         feat_loss_alpha = 1.0
         dur_loss_alpha = 5.0
         mel_loss_alpha = 45.0
