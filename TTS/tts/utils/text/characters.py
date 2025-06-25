@@ -23,6 +23,7 @@ _blank = "<BLNK>"  # TODO: check if we need this alongside with PAD
 _characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 _vi_characters = "aàáảãạăằắẳẵặâầấẩẫậbcddđeèéẻẽẹêềếểễệghiìíỉĩịklmnoòóỏõọôồốổỗộơờớởỡợpqrstuùúủũụưừứửữựvxyỳýỷỹỵ"
 _vi_characters = _vi_characters + _characters
+_vi_characters = ''.join(set(_vi_characters))
 _punctuations = "!'(),-.:;? "
 
 

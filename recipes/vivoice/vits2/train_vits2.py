@@ -16,7 +16,8 @@ from TTS.tts.utils.text.cleaners import english_cleaners
 
 def build_characters():
     vits2_charaters = Vits2Characters()
-    return vits2_charaters
+    vits2_charaters_config = vits2_charaters.to_config()
+    return vits2_charaters, vits2_charaters_config
 
 
 def get_configs(args):
@@ -127,8 +128,9 @@ def get_train_val_samples(dataset_config,
 def main(args):
     dataset_config, model_config = get_configs(args)
     audio_processor = AudioProcessor.init_from_config(model_config)
-    characters = build_characters()
+    characters, character_config = build_characters()
     tokenizer = build_tokenizer(model_config, characters)
+    model_config.characters = character_config
     train_samples, eval_samples = get_train_val_samples(dataset_config, model_config)
     if args.multi_spk:
         speaker_manager = SpeakerManager()

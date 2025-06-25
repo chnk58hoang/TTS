@@ -16,7 +16,8 @@ from TTS.utils.audio import AudioProcessor
 
 def build_characters():
     ns_charaters = NaturalSpeechCharacters()
-    return ns_charaters
+    ns_charater_config = ns_charaters.to_config()
+    return ns_charaters, ns_charater_config
 
 
 def get_configs(args):
@@ -124,7 +125,8 @@ def get_train_val_samples(dataset_config,
 def main(args):
     dataset_config, model_config = get_configs(args)
     audio_processor = AudioProcessor.init_from_config(model_config)
-    characters = build_characters()
+    characters, character_config = build_characters()
+    model_config.characters = character_config
     tokenizer = build_tokenizer(model_config, characters)
     train_samples, eval_samples = get_train_val_samples(dataset_config, model_config)
     if args.multi_spk:
