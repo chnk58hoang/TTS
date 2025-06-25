@@ -45,7 +45,7 @@ def get_configs(args):
         mel_loss_alpha = 45.0
         disc_loss_alpha = 1.0
         e2e_disc_loss_alpha = 1.0
-        reeze_encoder = False
+        freeze_encoder = False
         freeze_PE = False
         freeze_flow_decoder = False
         freeze_waveform_decoder = False
