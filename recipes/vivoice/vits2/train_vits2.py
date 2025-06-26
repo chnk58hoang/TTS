@@ -55,7 +55,7 @@ def main(args):
     )
 
     # Tokenizer is used to convert text to sequences of token IDs.
-    tokenizer = TTSTokenizer.init_from_config(model_config)
+    tokenizer, model_config = TTSTokenizer.init_from_config(model_config)
 
     train_samples, eval_samples = load_tts_samples(
         dataset_config,
