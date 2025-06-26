@@ -1005,8 +1005,8 @@ class Vits2(BaseTTS):
 
         w = attn.sum(3)  # [B, 1, t_text]
         if self.args.use_sdp:
-            log_w_ = self.duration_predictor(h_text, x_mask, w, g=g)
-            l_length = log_w_ / torch.sum(x_mask)
+            logw_ = self.duration_predictor(h_text, x_mask, w, g=g)
+            l_length = logw_ / torch.sum(x_mask)
         else:
             logw = torch.log(w + 1e-6) * x_mask
             logw_ = self.duration_predictor(h_text.detach(), x_mask, g=g)
