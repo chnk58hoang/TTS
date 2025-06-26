@@ -1032,12 +1032,16 @@ class Vits2(BaseTTS):
         )
 
         # e2e flow
-        w_ = torch.exp(logw_) * x_mask * self.length_scale  # [B, 1, t_text]
+        if self.args.use_sdp:
+            plogw = self.duration_predictor(h_text, x_mask, g=g, reverse=True, noise_scale=self.inference_noise_scale_dp)
+        else:
+            plogw = self.duration_predictor(h_text, x_mask, g=g)
+        w_ = torch.exp(plogw) * x_mask * self.length_scale  # [B, 1, t_text]
         w_ceil_ = torch.ceil(w_)
         y_pred_lengths = torch.clamp_min(torch.sum(w_ceil_, [1, 2]), 1).long()
         y_pred_mask = sequence_mask(y_pred_lengths, None).to(x_mask.dtype).unsqueeze(1)
         pred_attn_mask = x_mask * y_pred_mask.transpose(1, 2)  # [B, 1, T_enc] * [B, T_dec, 1]
-        pred_attn = generate_path(w_ceil_.squeeze(1), pred_attn_mask.squeeze(1).transpose(1, 2))
+        pred_attn = generate_path(w_ceil_.squeeze(1), pred_attn_mask.squeeze(1).transpose(1, 2)).unsqueeze(1)  # [B, 1, T_text, T_spec]
         m_p_dur_e2e = torch.einsum("klmn, kjm -> kjn", [pred_attn, m_p_text])  # [batch, 1, t_text, t_spec] x [batch, d, t_text] -> [batch, d, t_spec]
         logs_p_dur_e2e = torch.einsum("klmn, kjm -> kjn", [pred_attn, logs_p_text])  # [batch, 1, t_text, t_spec] x [batch, d, t_text] -> [batch, d, t_spec]
         z_p_dur_e2e = m_p_dur_e2e + torch.exp(logs_p_dur_e2e) * torch.randn_like(m_p_dur_e2e)
@@ -1046,16 +1050,16 @@ class Vits2(BaseTTS):
                                                                   logs_p_dur_e2e,
                                                                   y_pred_mask,
                                                                   g=g, reverse=True)
-        _, slice_ids_e2e = rand_segments(z_p_audio_e2e,
-                                         torch.minimum(y_pred_lengths, y_lengths),
-                                         self.spec_segment_size,
-                                         let_short_samples=True,
-                                         pad_short=True)
+        z_p_audio_e2e_slice, slice_ids_e2e = rand_segments(z_p_audio_e2e,
+                                                           torch.minimum(y_pred_lengths, y_lengths),
+                                                           self.spec_segment_size,
+                                                           let_short_samples=True,
+                                                           pad_short=True)
         waveform_seg_e2e = segment(waveform,
                                    segment_indices=slice_ids_e2e * self.config.audio.hop_length,
                                    segment_size=self.spec_segment_size * self.config.audio.hop_length,
                                    pad_short=True)
-        o_e2e = self.waveform_decoder((z_p_audio_e2e * y_pred_mask)[:, :, : self.max_inference_len], g=g)
+        o_e2e = self.waveform_decoder((z_p_audio_e2e_slice * y_pred_mask)[:, :, : self.max_inference_len], g=g)
 
         outputs.update(
             {
