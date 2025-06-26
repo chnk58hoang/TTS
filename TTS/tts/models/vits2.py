@@ -1756,7 +1756,6 @@ class Vits2(BaseTTS):
             speaker_manager.init_encoder(
                 config.model_args.speaker_encoder_model_path, config.model_args.speaker_encoder_config_path
             )
-        print(new_config)
         return Vits2(new_config, ap, tokenizer, speaker_manager, language_manager)
 
     def export_onnx(self, output_path: str = "coqui_vits.onnx", verbose: bool = True):

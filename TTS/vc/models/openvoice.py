@@ -40,6 +40,52 @@ from TTS.vc.modules.freevc import modules as modules
 from torch.nn.utils.parametrizations import weight_norm
 
 
+@torch.no_grad()
+def weights_reset(m: nn.Module):
+    # check if the current module has reset_parameters and if it is reset the weight
+    reset_parameters = getattr(m, "reset_parameters", None)
+    if callable(reset_parameters):
+        m.reset_parameters()
+
+
+def get_module_weights_sum(mdl: nn.Module):
+    dict_sums = {}
+    for name, w in mdl.named_parameters():
+        if "weight" in name:
+            value = w.data.sum().item()
+            dict_sums[name] = value
+    return dict_sums
+
+
+def load_audio(file_path):
+    """Load the audio file normalized in [-1, 1]
+
+    Return Shapes:
+        - x: :math:`[1, T]`
+    """
+    x, sr = torchaudio.load(file_path)
+    assert (x > 1).sum() + (x < -1).sum() == 0
+    return x, sr
+
+
+def _amp_to_db(x, C=1, clip_val=1e-5):
+    return torch.log(torch.clamp(x, min=clip_val) * C)
+
+
+def _db_to_amp(x, C=1):
+    return torch.exp(x) / C
+
+
+def amp_to_db(magnitudes):
+    output = _amp_to_db(magnitudes)
+    return output
+
+
+def db_to_amp(magnitudes):
+    output = _db_to_amp(magnitudes)
+    return output
+
+
 def wav_to_spec(y, n_fft, hop_length, win_length, center=False):
     """
     Args Shapes:
@@ -104,15 +150,6 @@ def spec_to_mel(spec, n_fft, num_mels, sample_rate, fmin, fmax):
     return mel
 
 
-def _amp_to_db(x, C=1, clip_val=1e-5):
-    return torch.log(torch.clamp(x, min=clip_val) * C)
-
-
-def amp_to_db(magnitudes):
-    output = _amp_to_db(magnitudes)
-    return output
-
-
 def wav_to_mel(y, n_fft, num_mels, sample_rate, hop_length, win_length, fmin, fmax, center=False):
     """
     Args Shapes:
@@ -162,6 +199,166 @@ def wav_to_mel(y, n_fft, num_mels, sample_rate, hop_length, win_length, fmin, fm
     spec = torch.matmul(mel_basis[fmax_dtype_device], spec)
     spec = amp_to_db(spec)
     return spec
+
+
+def get_attribute_balancer_weights(items: list, attr_name: str, multi_dict: dict = None):
+    """Create inverse frequency weights for balancing the dataset.
+    Use `multi_dict` to scale relative weights."""
+    attr_names_samples = np.array([item[attr_name] for item in items])
+    unique_attr_names = np.unique(attr_names_samples).tolist()
+    attr_idx = [unique_attr_names.index(l) for l in attr_names_samples]
+    attr_count = np.array([len(np.where(attr_names_samples == l)[0]) for l in unique_attr_names])
+    weight_attr = 1.0 / attr_count
+    dataset_samples_weight = np.array([weight_attr[l] for l in attr_idx])
+    dataset_samples_weight = dataset_samples_weight / np.linalg.norm(dataset_samples_weight)
+    if multi_dict is not None:
+        # check if all keys are in the multi_dict
+        for k in multi_dict:
+            assert k in unique_attr_names, f"{k} not in {unique_attr_names}"
+        # scale weights
+        multiplier_samples = np.array([multi_dict.get(item[attr_name], 1.0) for item in items])
+        dataset_samples_weight *= multiplier_samples
+    return (
+        torch.from_numpy(dataset_samples_weight).float(),
+        unique_attr_names,
+        np.unique(dataset_samples_weight).tolist(),
+    )
+
+
+class OVAudioConfig(Coqpit):
+    fft_size: int = 1024
+    sample_rate: int = 22050
+    win_length: int = 1024
+    hop_length: int = 256
+    num_mels: int = 80
+    mel_fmin: int = 0
+    mel_fmax: int = None
+
+
+class OVDataset(TTSDataset):
+    def __init__(self, model_args, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pad_id = self.tokenizer.characters.pad_id
+        self.model_args = model_args
+
+    def __getitem__(self, idx):
+        item = self.samples[idx]
+        raw_text = item["text"]
+
+        wav, _ = load_audio(item["audio_file"])
+        if self.model_args.encoder_sample_rate is not None:
+            if wav.size(1) % self.model_args.encoder_sample_rate != 0:
+                wav = wav[:, : -int(wav.size(1) % self.model_args.encoder_sample_rate)]
+
+        wav_filename = os.path.basename(item["audio_file"])
+
+        token_ids = self.get_token_ids(idx, item["text"])
+
+        # after phonemization the text length may change
+        # this is a shameful 🤭 hack to prevent longer phonemes
+        # TODO: find a better fix
+        if len(token_ids) > self.max_text_len or wav.shape[1] < self.min_audio_len:
+            self.rescue_item_idx += 1
+            return self.__getitem__(self.rescue_item_idx)
+
+        return {
+            "raw_text": raw_text,
+            "token_ids": token_ids,
+            "token_len": len(token_ids),
+            "wav": wav,
+            "wav_file": wav_filename,
+            "speaker_name": item["speaker_name"],
+            "language_name": item["language"],
+            "audio_unique_name": item["audio_unique_name"],
+        }
+
+    @property
+    def lengths(self):
+        lens = []
+        for item in self.samples:
+            _, wav_file, *_ = _parse_sample(item)
+            audio_len = os.path.getsize(wav_file) / 16 * 8  # assuming 16bit audio
+            lens.append(audio_len)
+        return lens
+
+    def collate_fn(self, batch):
+        """
+        Return Shapes:
+            - tokens: :math:`[B, T]`
+            - token_lens :math:`[B]`
+            - token_rel_lens :math:`[B]`
+            - waveform: :math:`[B, 1, T]`
+            - waveform_lens: :math:`[B]`
+            - waveform_rel_lens: :math:`[B]`
+            - speaker_names: :math:`[B]`
+            - language_names: :math:`[B]`
+            - audiofile_paths: :math:`[B]`
+            - raw_texts: :math:`[B]`
+            - audio_unique_names: :math:`[B]`
+        """
+        # convert list of dicts to dict of lists
+        B = len(batch)
+        batch = {k: [dic[k] for dic in batch] for k in batch[0]}
+
+        _, ids_sorted_decreasing = torch.sort(
+            torch.LongTensor([x.size(1) for x in batch["wav"]]), dim=0, descending=True
+        )
+
+        max_text_len = max([len(x) for x in batch["token_ids"]])
+        token_lens = torch.LongTensor(batch["token_len"])
+        token_rel_lens = token_lens / token_lens.max()
+
+        wav_lens = [w.shape[1] for w in batch["wav"]]
+        wav_lens = torch.LongTensor(wav_lens)
+        wav_lens_max = torch.max(wav_lens)
+        wav_rel_lens = wav_lens / wav_lens_max
+
+        token_padded = torch.LongTensor(B, max_text_len)
+        wav_padded = torch.FloatTensor(B, 1, wav_lens_max)
+        token_padded = token_padded.zero_() + self.pad_id
+        wav_padded = wav_padded.zero_() + self.pad_id
+        for i in range(len(ids_sorted_decreasing)):
+            token_ids = batch["token_ids"][i]
+            token_padded[i, : batch["token_len"][i]] = torch.LongTensor(token_ids)
+
+            wav = batch["wav"][i]
+            wav_padded[i, :, : wav.size(1)] = torch.FloatTensor(wav)
+
+        return {
+            "tokens": token_padded,
+            "token_lens": token_lens,
+            "token_rel_lens": token_rel_lens,
+            "waveform": wav_padded,  # (B x T)
+            "waveform_lens": wav_lens,  # (B)
+            "waveform_rel_lens": wav_rel_lens,
+            "speaker_names": batch["speaker_name"],
+            "language_names": batch["language_name"],
+            "audio_files": batch["wav_file"],
+            "raw_text": batch["raw_text"],
+            "audio_unique_names": batch["audio_unique_name"],
+        }
+
+
+@dataclass
+class OVArgs(Coqpit):
+    spec_segment_size: int = 32
+    spec_channels: int = 80
+    inter_channels: int = 1
+    hidden_channels: int = 192
+    hidden_channels_ffn: int = 768
+    filter_channels: int = 2
+    n_heads: int
+    n_layers: int
+    kernel_size: int
+    p_dropout: int
+    resblock: int
+    resblock_kernel_sizes: int
+    resblock_dilation_sizes: int
+    upsample_rates: int
+    upsample_initial_channel: int
+    upsample_kernel_sizes: int
+    gin_channels: int
+    num_chars: int = 100
 
 
 class PosteriorEncoder(nn.Module):
@@ -271,31 +468,6 @@ class ReferenceEncoder(nn.Module):
             L = (L - kernel_size + 2 * pad) // stride + 1
         return L
 
-
-def get_attribute_balancer_weights(items: list, attr_name: str, multi_dict: dict = None):
-    """Create inverse frequency weights for balancing the dataset.
-    Use `multi_dict` to scale relative weights."""
-    attr_names_samples = np.array([item[attr_name] for item in items])
-    unique_attr_names = np.unique(attr_names_samples).tolist()
-    attr_idx = [unique_attr_names.index(l) for l in attr_names_samples]
-    attr_count = np.array([len(np.where(attr_names_samples == l)[0]) for l in unique_attr_names])
-    weight_attr = 1.0 / attr_count
-    dataset_samples_weight = np.array([weight_attr[l] for l in attr_idx])
-    dataset_samples_weight = dataset_samples_weight / np.linalg.norm(dataset_samples_weight)
-    if multi_dict is not None:
-        # check if all keys are in the multi_dict
-        for k in multi_dict:
-            assert k in unique_attr_names, f"{k} not in {unique_attr_names}"
-        # scale weights
-        multiplier_samples = np.array([multi_dict.get(item[attr_name], 1.0) for item in items])
-        dataset_samples_weight *= multiplier_samples
-    return (
-        torch.from_numpy(dataset_samples_weight).float(),
-        unique_attr_names,
-        np.unique(dataset_samples_weight).tolist(),
-    )
-
-
 class OpenVoice(BaseVC):
     """
     Synthesizer for Training
@@ -322,11 +494,9 @@ class OpenVoice(BaseVC):
         self.upsample_initial_channel = self.args.upsample_initial_channel
         self.upsample_kernel_sizes = self.args.upsample_kernel_sizes
         self.gin_channels = self.args.gin_channels
-        self.ssl_dim = self.args.ssl_dim
-        self.use_spk = self.args.use_spk
-        self.n_vocab = self.args.n_vocab
+        self.n_vocab = self.args.num_chars
 
-        self.phone_encoder = TextEncoder(n_vocab=self.args.n_vocab,
+        self.phone_encoder = TextEncoder(n_vocab=self.args.num_chars,
                                          out_channels=self.inter_channels,
                                          hidden_channels=self.hidden_channels,
                                          hidden_channels_ffn=self.hidden_channels_ffn,
@@ -389,6 +559,7 @@ class OpenVoice(BaseVC):
         z_p_aligned = m_p_aligned + torch.randn_like(m_p_aligned) * torch.exp(logs_p_aligned)
         output = {
             "gt_wave_seg": gt_waveform_seg,
+            "alignments": attn.squeeze(1),
             "out_wave_seg": output_wave,
             "q_slice_idx": q_slice_idx,
             "z_p": z_p,
@@ -399,10 +570,10 @@ class OpenVoice(BaseVC):
         return output
 
     @torch.no_grad()
-    def voice_conversion(self, y, y_lengths, sid_src, sid_tgt, tau=1.0):
-        g_src = sid_src
-        g_tgt = sid_tgt
-        z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g_src if not self.zero_g else torch.zeros_like(g_src),
+    def inference(self, y_src, y_src_lengths, y_tgt, tau=1.0):
+        g_src = self.ref_enc(y_src)
+        g_tgt = self.ref_enc(y_tgt)
+        z, m_q, logs_q, y_mask = self.enc_q(y_src, y_src_lengths, g=g_src if not self.zero_g else torch.zeros_like(g_src),
                                             tau=tau)
         z_p = self.flow(z, y_mask, g=g_src)
         z_hat = self.flow(z_p, y_mask, g=g_tgt, reverse=True)
@@ -481,7 +652,69 @@ class OpenVoice(BaseVC):
             )
             # compute losses
             with autocast(enabled=False):
-                pass
+                loss_dict = criterion[optimizer_idx](
+                    mel_slice=mel_slice,
+                    mel_slice_hat=mel_slice_hat,
+                    z_len=spec_lens,
+                    scores_disc_fake=scores_disc_fake,
+                    feats_disc_fake=feats_disc_fake,
+                    feats_disc_real=feats_disc_real,
+                    z_p=self.model_outputs_cache['z_p'],
+                    logs_p=self.model_outputs_cache['logs_p'],
+                    m_p_aligned=self.model_outputs_cache['m_p_aligned'],
+                    logs_p_aligned=self.model_outputs_cache['logs_p_aligned']
+                )
+            return self.model_outputs_cache, loss_dict
+
+    def _log(self, ap, batch, outputs, name_prefix="train"):  # pylint: disable=unused-argument,no-self-use
+        y_hat = outputs[1]["out_wave_seg"]
+        y = outputs[1]["gt_wave_seg"]
+        figures = plot_results(y_hat, y, ap, name_prefix)
+        sample_voice = y_hat[0].squeeze(0).detach().cpu().numpy()
+        audios = {f"{name_prefix}/audio": sample_voice}
+
+        alignments = outputs[1]["alignments"]
+        align_img = alignments[0].data.cpu().numpy().T
+
+        figures.update(
+            {
+                "alignment": plot_alignment(align_img, output_fig=False),
+            }
+        )
+        return figures, audios
+
+    def train_log(
+        self, batch: dict, outputs: dict, logger: "Logger", assets: dict, steps: int
+    ):  # pylint: disable=no-self-use
+        """Create visualizations and waveform examples.
+
+        For example, here you can plot spectrograms and generate sample sample waveforms from these spectrograms to
+        be projected onto Tensorboard.
+
+        Args:
+            ap (AudioProcessor): audio processor used at training.
+            batch (Dict): Model inputs used at the previous training step.
+            outputs (Dict): Model outputs generated at the previoud training step.
+
+        Returns:
+            Tuple[Dict, np.ndarray]: training plots and output waveform.
+        """
+        figures, audios = self._log(self.ap, batch, outputs, "train")
+        logger.train_figures(steps, figures)
+        logger.train_audios(steps, audios, self.ap.sample_rate)
+
+    @torch.no_grad()
+    def eval_step(self, batch: dict, criterion: nn.Module, optimizer_idx: int):
+        return self.train_step(batch, criterion, optimizer_idx)
+
+    def eval_log(self, batch: dict, outputs: dict, logger: "Logger", assets: dict, steps: int) -> None:
+        figures, audios = self._log(self.ap, batch, outputs, "eval")
+        logger.eval_figures(steps, figures)
+        logger.eval_audios(steps, audios, self.ap.sample_rate)
+    
+    @torch.no_grad()
+    def test_run(self, assets):
+
 
     def get_criterion(self):
         from TTS.tts.layers.losses import OVGeneratorLoss, OVDiscriminatorLoss
@@ -642,7 +875,7 @@ class OpenVoice(BaseVC):
             List: learning rates for each optimizer.
         """
         return [self.config.lr_disc, self.config.lr_gen]
-    
+
     def get_data_loader(
         self,
         config: Coqpit,
@@ -657,7 +890,7 @@ class OpenVoice(BaseVC):
             loader = None
         else:
             # init dataloader
-            dataset = VitsDataset(
+            dataset = OVDataset(
                 model_args=self.args,
                 samples=samples,
                 batch_group_size=0 if is_eval else config.batch_group_size * config.batch_size,
@@ -710,3 +943,125 @@ class OpenVoice(BaseVC):
                         pin_memory=False,
                     )
         return loader
+
+    def export_onnx(self, output_path: str = "coqui_vits.onnx", verbose: bool = True):
+        """Export model to ONNX format for inference
+
+        Args:
+            output_path (str): Path to save the exported model.
+            verbose (bool): Print verbose information. Defaults to True.
+        """
+
+        # rollback values
+        _forward = self.forward
+        disc = None
+        if hasattr(self, "disc"):
+            disc = self.disc
+        training = self.training
+
+        # set export mode
+        self.disc = None
+        self.eval()
+
+        def onnx_inference(text, text_lengths, scales, sid=None, langid=None):
+            noise_scale = scales[0]
+            length_scale = scales[1]
+            noise_scale_dp = scales[2]
+            self.noise_scale = noise_scale
+            self.length_scale = length_scale
+            self.noise_scale_dp = noise_scale_dp
+            return self.inference(
+                text,
+                aux_input={
+                    "x_lengths": text_lengths,
+                    "d_vectors": None,
+                    "speaker_ids": sid,
+                    "language_ids": langid,
+                    "durations": None,
+                },
+            )["model_outputs"]
+
+        self.forward = onnx_inference
+
+        # set dummy inputs
+        dummy_input_length = 100
+        sequences = torch.randint(low=0, high=2, size=(1, dummy_input_length), dtype=torch.long)
+        sequence_lengths = torch.LongTensor([sequences.size(1)])
+        scales = torch.FloatTensor([self.inference_noise_scale, self.length_scale, self.inference_noise_scale_dp])
+        dummy_input = (sequences, sequence_lengths, scales)
+        input_names = ["input", "input_lengths", "scales"]
+
+        if self.num_speakers > 0:
+            speaker_id = torch.LongTensor([0])
+            dummy_input += (speaker_id,)
+            input_names.append("sid")
+
+        if hasattr(self, "num_languages") and self.num_languages > 0 and self.embedded_language_dim > 0:
+            language_id = torch.LongTensor([0])
+            dummy_input += (language_id,)
+            input_names.append("langid")
+
+        # export to ONNX
+        torch.onnx.export(
+            model=self,
+            args=dummy_input,
+            opset_version=15,
+            f=output_path,
+            verbose=verbose,
+            input_names=input_names,
+            output_names=["output"],
+            dynamic_axes={
+                "input": {0: "batch_size", 1: "phonemes"},
+                "input_lengths": {0: "batch_size"},
+                "output": {0: "batch_size", 1: "time1", 2: "time2"},
+            },
+        )
+
+        # rollback
+        self.forward = _forward
+        if training:
+            self.train()
+        if not disc is None:
+            self.disc = disc
+
+    def load_onnx(self, model_path: str, cuda=False):
+        import onnxruntime as ort
+
+        providers = [
+            "CPUExecutionProvider"
+            if cuda is False
+            else ("CUDAExecutionProvider", {"cudnn_conv_algo_search": "DEFAULT"})
+        ]
+        sess_options = ort.SessionOptions()
+        self.onnx_sess = ort.InferenceSession(
+            model_path,
+            sess_options=sess_options,
+            providers=providers,
+        )
+
+    def inference_onnx(self, x, x_lengths=None, speaker_id=None, language_id=None):
+        """ONNX inference"""
+
+        if isinstance(x, torch.Tensor):
+            x = x.cpu().numpy()
+
+        if x_lengths is None:
+            x_lengths = np.array([x.shape[1]], dtype=np.int64)
+
+        if isinstance(x_lengths, torch.Tensor):
+            x_lengths = x_lengths.cpu().numpy()
+        scales = np.array(
+            [self.inference_noise_scale, self.length_scale, self.inference_noise_scale_dp],
+            dtype=np.float32,
+        )
+        input_params = {"input": x, "input_lengths": x_lengths, "scales": scales}
+        if not speaker_id is None:
+            input_params["sid"] = torch.tensor([speaker_id]).cpu().numpy()
+        if not language_id is None:
+            input_params["langid"] = torch.tensor([language_id]).cpu().numpy()
+
+        audio = self.onnx_sess.run(
+            ["output"],
+            input_params,
+        )
+        return audio[0][0]
