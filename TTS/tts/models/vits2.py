@@ -1059,7 +1059,7 @@ class Vits2(BaseTTS):
                                    segment_indices=slice_ids_e2e * self.config.audio.hop_length,
                                    segment_size=self.spec_segment_size * self.config.audio.hop_length,
                                    pad_short=True)
-        o_e2e = self.waveform_decoder((z_p_audio_e2e_slice * y_pred_mask)[:, :, : self.max_inference_len], g=g)
+        o_e2e = self.waveform_decoder(z_p_audio_e2e_slice, g=g)
 
         outputs.update(
             {
