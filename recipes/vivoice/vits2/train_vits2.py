@@ -6,21 +6,12 @@ from TTS.tts.configs.vits2_config import Vits2Config
 from TTS.tts.datasets import load_tts_samples
 from TTS.tts.models.vits2 import (Vits2,
                                   Vits2AudioConfig,
-                                  Vits2Args,
                                   Vits2Characters)
 from TTS.tts.utils.speakers import SpeakerManager
 from TTS.tts.utils.text.tokenizer import TTSTokenizer
 from TTS.utils.audio import AudioProcessor
-from TTS.tts.utils.text.cleaners import english_cleaners
 
-
-def build_characters():
-    vits2_charaters = Vits2Characters()
-    vits2_charaters_config = vits2_charaters.to_config()
-    return vits2_charaters, vits2_charaters_config
-
-
-def get_configs(args):
+def main(args):
     # dataset config
     dataset_config = BaseDatasetConfig(formatter=args.formatter,
                                        meta_file_train=args.meta_file_train,
@@ -35,58 +26,13 @@ def get_configs(args):
                                     mel_fmin=0,
                                     mel_fmax=None)
 
-    # model config
-    if not args.finetune:
-        kl_loss_alpha_dur = 1.0
-        kl_loss_alpha_audio = 1.0
-        disc_loss_alpha = 1.0
-        e2e_disc_loss_alpha = 0.0
-        gen_loss_alpha = 1.0
-        gen_e2e_loss_alpha = 0.0
-        feat_loss_alpha = 1.0
-        mel_loss_alpha = 45.0
-        dur_loss_alpha = 1.0
-        freeze_encoder = False
-        freeze_PE = False
-        freeze_flow_decoder = False
-        freeze_waveform_decoder = False
-    else:
-        kl_loss_alpha_dur = 0.0
-        kl_loss_alpha_audio = 0.0
-        disc_loss_alpha = 0.0
-        e2e_disc_loss_alpha = 1.0
-        gen_loss_alpha = 0.0
-        gen_e2e_loss_alpha = 1.0
-        feat_loss_alpha = 0.0
-        mel_loss_alpha = 0.0
-        dur_loss_alpha = 0.0
-        freeze_encoder = True
-        freeze_PE = True
-        freeze_flow_decoder = True
-        freeze_waveform_decoder = True
-
-    #  model args
-    vits2_args = Vits2Args(freeze_encoder=freeze_encoder,
-                           freeze_PE=freeze_PE,
-                           freeze_flow_decoder=freeze_flow_decoder,
-                           freeze_waveform_decoder=freeze_waveform_decoder)
     model_config = Vits2Config(
-        model_args=vits2_args,
         audio=audio_config,
         run_name="vits2_vietnamese",
         batch_size=args.batch_size,
         eval_batch_size=args.eval_batch_size,
         lr_disc=args.lr,
         lr_gen=args.lr,
-        kl_loss_alpha_dur=kl_loss_alpha_dur,
-        kl_loss_alpha_audio=kl_loss_alpha_audio,
-        disc_loss_alpha=disc_loss_alpha,
-        e2e_disc_loss_alpha=e2e_disc_loss_alpha,
-        gen_loss_alpha=gen_loss_alpha,
-        gen_e2e_loss_alpha=gen_e2e_loss_alpha,
-        feat_loss_alpha=feat_loss_alpha,
-        mel_loss_alpha=mel_loss_alpha,
-        dur_loss_alpha=dur_loss_alpha,
         batch_group_size=args.batch_group_size,
         num_loader_workers=args.num_loader_workers,
         num_eval_loader_workers=args.num_eval_loader_workers,
@@ -99,43 +45,23 @@ def get_configs(args):
         phoneme_cache_path=os.path.join(args.output_path, "phoneme_cache"),
         compute_input_seq_cache=True,
         print_step=args.print_step,
-        print_eval=False,
+        print_eval=True,
         mixed_precision=False,
         max_text_len=325,  # change this if you have a larger VRAM than 16GB
+        datasets=[dataset_config],
+        characters=Vits2Characters.to_config(),
     )
 
-    return dataset_config, model_config
-
-
-def build_tokenizer(model_config, characters):
     # Tokenizer is used to convert text to sequences of token IDs.
-    # config is updated with the default characters if not defined in the config.
-    # phomizer = ViPhonemizer()
-    tokenizer = TTSTokenizer(use_phonemes=model_config.use_phonemes,
-                             characters=characters,
-                             text_cleaner=english_cleaners,
-                             phonemizer=None,
-                             use_eos_bos=False)
-    return tokenizer
+    tokenizer = TTSTokenizer.init_from_config(model_config)
 
-
-def get_train_val_samples(dataset_config,
-                          model_config):
     train_samples, eval_samples = load_tts_samples(
         dataset_config,
         eval_split=True,
         eval_split_max_size=model_config.eval_split_max_size,
         eval_split_size=model_config.eval_split_size)
-    return train_samples, eval_samples
 
-
-def main(args):
-    dataset_config, model_config = get_configs(args)
     audio_processor = AudioProcessor.init_from_config(model_config)
-    characters, character_config = build_characters()
-    tokenizer = build_tokenizer(model_config, characters)
-    model_config.characters = character_config
-    train_samples, eval_samples = get_train_val_samples(dataset_config, model_config)
     if args.multi_spk:
         speaker_manager = SpeakerManager()
         speaker_manager.set_ids_from_data(train_samples + eval_samples, parse_key="speaker_name")
@@ -166,7 +92,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
     parser.add_argument("--accum", type=int, default=1, help="Gradient accumulation steps")
     parser.add_argument("--eval_batch_size", type=int, default=16, help="Batch size for evaluation")
-    parser.add_argument("--lr", type=float, default=1.9e-4, help="Learning rate for training")
+    parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate for training")
     parser.add_argument("--batch_group_size", type=int, default=16,
                         help="Batch group size for training")
     parser.add_argument("--num_loader_workers", type=int, default=4,
@@ -194,4 +120,5 @@ if __name__ == "__main__":
     main(args)
     print("Training completed successfully.")
     print("Model saved to:", args.output_path)
+
 

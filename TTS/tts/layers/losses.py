@@ -781,7 +781,6 @@ class Vits2DiscriminatorLoss(nn.Module):
     def __init__(self, c: Coqpit):
         super().__init__()
         self.disc_loss_alpha = c.disc_loss_alpha
-        self.e2e_disc_loss_alpha = c.e2e_disc_loss_alpha
 
     @staticmethod
     def discriminator_loss(scores_real, scores_fake):
@@ -798,51 +797,18 @@ class Vits2DiscriminatorLoss(nn.Module):
             fake_losses.append(fake_loss.item())
         return loss, real_losses, fake_losses
 
-    def compute_disc_loss(self, scores_disc_real, scores_disc_fake):
+    def forward(self, scores_disc_real, scores_disc_fake):
         loss = 0.0
         return_dict = {}
         loss_disc, loss_disc_real, _ = self.discriminator_loss(
             scores_real=scores_disc_real, scores_fake=scores_disc_fake
         )
-        loss_disc = loss_disc * self.disc_loss_alpha
-        return_dict["loss_disc"] = loss_disc
+        return_dict["loss_disc"] = loss_disc * self.disc_loss_alpha
         loss = loss + return_dict["loss_disc"]
-        # return_dict["loss"] = loss
+        return_dict["loss"] = loss
 
         for i, ldr in enumerate(loss_disc_real):
             return_dict[f"loss_disc_real_{i}"] = ldr
-        return return_dict
-
-    def compute_disc_e2e_loss(self, scores_disc_real_e2e, scores_disc_fake_e2e):
-        loss = 0.0
-        return_dict = {}
-        loss_disc, loss_disc_real, _ = self.discriminator_loss(
-            scores_real=scores_disc_real_e2e, scores_fake=scores_disc_fake_e2e
-        )
-        loss_disc = loss_disc * self.e2e_disc_loss_alpha
-        return_dict["loss_disc_e2e"] = loss_disc
-        loss = loss + return_dict["loss_disc_e2e"]
-        # return_dict["loss"] = loss
-
-        for i, ldr in enumerate(loss_disc_real):
-            return_dict[f"loss_disc_real_{i}_e2e"] = ldr
-        return return_dict
-
-    def forward(
-        self,
-        scores_disc_real,
-        scores_disc_fake,
-        scores_disc_real_e2e,
-        scores_disc_fake_e2e,
-    ):
-        return_dict = {}
-        loss = 0.0
-        # compute discriminator loss
-        return_dict.update(self.compute_disc_loss(scores_disc_real, scores_disc_fake))
-        # compute e2e discriminator loss
-        return_dict.update(self.compute_disc_e2e_loss(scores_disc_real_e2e, scores_disc_fake_e2e))
-        loss = return_dict["loss_disc"] + return_dict["loss_disc_e2e"]
-        return_dict["loss"] = loss
         return return_dict
 
 
@@ -909,7 +875,6 @@ class Vits2GeneratorLoss(nn.Module):
         l = kl / torch.sum(z_mask)
         return l
 
-
     @staticmethod
     def kl_loss_normal(m_q: torch.Tensor, logs_q: torch.Tensor, m_p: torch.Tensor, logs_p: torch.Tensor, z_mask: torch.Tensor):
         """
@@ -948,7 +913,6 @@ class Vits2GeneratorLoss(nn.Module):
         scores_disc_fake,
         feats_disc_fake,
         feats_disc_real,
-        scores_disc_fake_e2e,
         loss_duration,
         use_speaker_encoder_as_loss=False,
         gt_spk_emb=None,
@@ -961,7 +925,6 @@ class Vits2GeneratorLoss(nn.Module):
         loss_mel = torch.nn.functional.l1_loss(mel_slice, mel_slice_hat) * self.mel_loss_alpha
         loss_gen = self.generator_loss(scores_fake=scores_disc_fake)[0] * self.gen_loss_alpha
         # gen e2e loss
-        loss_gen_e2e = self.generator_loss(scores_fake=scores_disc_fake_e2e)[0] * self.gen_e2e_loss_alpha
         loss_kl_dur = self.kl_loss(z_q_dur, logs_q_dur, m_p_dur, logs_p_dur, z_mask.unsqueeze(1)) * self.kl_loss_alpha_dur
         loss_kl_audio = self.kl_loss_normal(m_p_audio, logs_p_audio, m_q_audio, logs_q_audio, z_mask.unsqueeze(1)) * self.kl_loss_alpha_audio
         loss_feat = self.feature_loss(feats_real=feats_disc_real, feats_generated=feats_disc_fake) * self.feat_loss_alpha
@@ -971,7 +934,6 @@ class Vits2GeneratorLoss(nn.Module):
             loss = loss + loss_se
             return_dict["loss_spk_encoder"] = loss_se
         return_dict["loss_gen"] = loss_gen
-        return_dict["loss_gen_e2e"] = loss_gen_e2e
         return_dict["loss_kl_dur"] = loss_kl_dur
         return_dict["loss_kl_audio"] = loss_kl_audio
         return_dict["loss_feat"] = loss_feat
