@@ -147,7 +147,8 @@ def main(args):
     trainer = Trainer(
         TrainerArgs(continue_path=args.continue_path,
                     restore_path=args.restore_path,
-                    gpu=args.gpu),
+                    gpu=args.gpu,
+                    grad_accum_steps=args.accum),
         model_config,
         args.output_path,
         model=ns_model,
@@ -163,6 +164,7 @@ if __name__ == "__main__":
                         default='metadata.txt', help="Path to the meta file for training")
     parser.add_argument("--formatter", type=str, default="ns_female", help="dataset formatter")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
+    parser.add_argument("--accum", type=int, default=1, help="Gradient accumulation steps")
     parser.add_argument("--eval_batch_size", type=int, default=16, help="Batch size for evaluation")
     parser.add_argument("--lr", type=float, default=1.9e-4, help="Learning rate for training")
     parser.add_argument("--batch_group_size", type=int, default=16,
