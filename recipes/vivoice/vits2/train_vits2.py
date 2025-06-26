@@ -11,7 +11,9 @@ from TTS.tts.utils.speakers import SpeakerManager
 from TTS.tts.utils.text.tokenizer import TTSTokenizer
 from TTS.utils.audio import AudioProcessor
 
+
 def main(args):
+    vits2_characters = Vits2Characters()
     # dataset config
     dataset_config = BaseDatasetConfig(formatter=args.formatter,
                                        meta_file_train=args.meta_file_train,
@@ -49,7 +51,7 @@ def main(args):
         mixed_precision=False,
         max_text_len=325,  # change this if you have a larger VRAM than 16GB
         datasets=[dataset_config],
-        characters=Vits2Characters.to_config(),
+        characters=vits2_characters.to_config(),
     )
 
     # Tokenizer is used to convert text to sequences of token IDs.
