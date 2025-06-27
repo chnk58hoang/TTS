@@ -351,11 +351,11 @@ class OVArgs(Coqpit):
     kernel_size: int = 3
     p_dropout: int = 0.1
     resblock: int = "1"
-    resblock_kernel_sizes: List[int] = [3, 7, 11]
-    resblock_dilation_sizes: List[List[int]] = [[1, 3, 5], [1, 3, 5], [1, 3, 5]]
-    upsample_rates: List[int] = [8, 8, 2, 2]
+    resblock_kernel_sizes: List[int] = field(default_factory=lambda: [3, 7, 11])
+    resblock_dilation_sizes: List[List[int]] = field(default_factory=lambda: [[1, 3, 5], [1, 3, 5], [1, 3, 5]])
+    upsample_rates: List[int] = field(default_factory=lambda: [8, 8, 2, 2])
     upsample_initial_channel: int = 512
-    upsample_kernel_sizes: List[int] = [16, 16, 4, 4]
+    upsample_kernel_sizes: List[int] = field(default_factory=lambda: [16, 16, 4, 4])
     gin_channels: int = 256
     num_chars: int = 100
 
@@ -605,7 +605,7 @@ class OpenVoice(BaseTTS):
         model = OpenVoice(config, speaker_manager=None)
         return model
 
-    def load_checkpoint(self, config, checkpoint_path, eval=False, strict=True, cache=False):
+    def load_checkpoint(self, config, checkpoint_path, eval=False, strict=False, cache=False):
         state = load_fsspec(checkpoint_path, map_location=torch.device("cpu"), cache=cache)
         self.load_state_dict(state["model"], strict=strict)
         if eval:

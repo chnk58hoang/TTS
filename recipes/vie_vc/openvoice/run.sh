@@ -1,9 +1,9 @@
 #! /bin/bash
 
 
-dataset_path=/data/female
-meta_file_train=metadata.csv
-formatter=ns_female
+dataset_path=/data/vivoice
+meta_file_train=transcripts.txt
+formatter=vivoice
 batch_size=12
 epochs=1500
 continue_path=
@@ -12,7 +12,7 @@ dict_phonemes_json=/TTS/TTS/tts/utils/text/vietnamese/dict_phoneme.json
 gpu=0
 accum=1
 
-python train_vits2.py \
+python train_openvoice.py \
     --dataset_path "${dataset_path}" \
     --meta_file_train "${meta_file_train}" \
     --formatter "${formatter}" \
