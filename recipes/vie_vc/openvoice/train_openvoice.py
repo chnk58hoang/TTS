@@ -1,4 +1,5 @@
 import os
+import random
 import argparse
 from trainer import Trainer, TrainerArgs
 from TTS.tts.configs.shared_configs import BaseDatasetConfig
@@ -10,6 +11,32 @@ from TTS.vc.models.openvoice import (OpenVoice,
 from TTS.tts.utils.text.tokenizer import TTSTokenizer
 from TTS.utils.audio import AudioProcessor
 
+
+def pick_multiple_audio_pairs(parent_dir, num_pairs):
+    """
+    Tạo `num_pairs` cặp audio từ các folder con của `parent_dir`,
+    mỗi cặp là {'src': ..., 'tgt': ...} với src và tgt đến từ 2 folder khác nhau.
+    """
+    all_folders = [f for f in os.listdir(parent_dir) if os.path.isdir(os.path.join(parent_dir, f))]
+
+    if len(all_folders) < 2:
+        raise ValueError("Cần ít nhất 2 thư mục con để chọn cặp audio.")
+
+    def random_file_from(folder):
+        folder_path = os.path.join(parent_dir, folder)
+        files = [f for f in os.listdir(folder_path) if os.path.isfile(os.path.join(folder_path, f))]
+        if not files:
+            raise ValueError(f"Folder '{folder}' không chứa file nào.")
+        return os.path.join(folder_path, random.choice(files))
+
+    pairs = []
+    for _ in range(num_pairs):
+        folder1, folder2 = random.sample(all_folders, 2)  # khác folder
+        src = random_file_from(folder1)
+        tgt = random_file_from(folder2)
+        pairs.append({"src": src, "tgt": tgt})
+
+    return pairs
 
 
 def main(args):
@@ -26,6 +53,8 @@ def main(args):
                                  num_mels=80,
                                  mel_fmin=0,
                                  mel_fmax=None)
+    # test samples
+    test_samples = pick_multiple_audio_pairs(args.test_dir, 5) if args.test_dir else []
     model_config = OpenVoiceConfig(
         audio=audio_config,
         run_name="openvoice_vietnamese",
@@ -50,6 +79,7 @@ def main(args):
         max_text_len=325,  # change this if you have a larger VRAM than 16GB
         datasets=[dataset_config],
         characters=openvoice_characters.to_config(),
+        test_samples=test_samples
     )
     # Tokenizer is used to convert text to sequences of token IDs.
     tokenizer, model_config = TTSTokenizer.init_from_config(model_config)
@@ -62,6 +92,9 @@ def main(args):
 
     audio_processor = AudioProcessor.init_from_config(model_config)
     model = OpenVoice(model_config, audio_processor, tokenizer, speaker_manager=None)
+    if args.pretrain_path:
+        print(f"Loading pre-trained model from {args.pretrain_path}")
+        model.load_checkpoint(checkpoint_path=args.pretrain_path, strict=False)
     trainer = Trainer(
         TrainerArgs(continue_path=args.continue_path,
                     restore_path=args.restore_path,
@@ -80,6 +113,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_path", type=str, required=True, help="Path to the dataset directory")
     parser.add_argument("--meta_file_train", type=str, required=True,
                         default='metadata.txt', help="Path to the meta file for training")
+    parser.add_argument("--test_dir", type=str, required=False, default=None)
     parser.add_argument("--formatter", type=str, default="ns_female", help="dataset formatter")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
     parser.add_argument("--accum", type=int, default=1, help="Gradient accumulation steps")
@@ -100,6 +134,8 @@ if __name__ == "__main__":
                         default="")
     parser.add_argument("--restore_path", type=str, default=None,
                         help="Path to restore the model from a checkpoint")
+    parser.add_argument("--pretrain_path", type=str, default=None,
+                        help="Path to the pretrain model")
     parser.add_argument("--dict_phonemes_json", type=str, required=True,
                         help="Path to the phoneme dictionary JSON file",
                         default='TTS/TTS/tts/utils/text/vietnamese/dict_phoneme.json')

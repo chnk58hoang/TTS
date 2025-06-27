@@ -728,7 +728,7 @@ class OpenVoice(BaseTTS):
         test_audios = {}
         print("Cloning test audio ...")
         ac = self.config.audio
-        for idx in range(self.config.num_test_samples):
+        for idx in range(len(self.config.test_samples)):
             src_path = self.config.test_samples[idx]["src"]
             tgt_path = self.config.test_samples[idx]["tgt"]
             src_wav, _ = load_audio(src_path).unsqueeze(0)
@@ -738,7 +738,9 @@ class OpenVoice(BaseTTS):
             src_spec_lens = src_spec.shape[2]
             out_wav, _, _ = self.inference(src_spec, src_spec_lens, tgt_spec)
             out_wav = out_wav[0].cpu().numpy()
-            test_audios["{}-audio".format(idx)] = out_wav
+            test_audios["{}-source_audio".format(idx)] = src_wav[0].cpu().numpy()
+            test_audios["{}-ref_audio".format(idx)] = tgt_wav[0].cpu().numpy()
+            test_audios["{}-cloned_audio".format(idx)] = out_wav
         return {"audios": test_audios}
 
     def get_criterion(self):
