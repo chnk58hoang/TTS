@@ -22,14 +22,13 @@ from TTS.tts.configs.shared_configs import CharactersConfig
 from TTS.tts.datasets.dataset import TTSDataset, _parse_sample
 from TTS.tts.layers.vits.discriminator import VitsDiscriminator
 from TTS.tts.layers.vits.networks import TextEncoder
-from TTS.vc.models.base_vc import BaseVC
+from TTS.tts.models.base_tts import BaseTTS
 from TTS.vc.models.freevc import Generator, ResidualCouplingBlock
 from TTS.tts.utils.fairseq import rehash_fairseq_vits_checkpoint
 from TTS.tts.utils.helpers import generate_path, maximum_path, rand_segments, segment, sequence_mask
 from TTS.tts.utils.speakers import SpeakerManager
 from TTS.tts.utils.synthesis import synthesis
-from TTS.tts.utils.text.characters import BaseCharacters, BaseVocabulary, _characters, _pad, _phonemes, _punctuations
-from TTS.tts.utils.text.tokenizer import TTSTokenizer
+from TTS.tts.utils.text.characters import BaseCharacters, _vi_characters, _pad, _punctuations
 from TTS.tts.utils.visual import plot_alignment
 from TTS.utils.io import load_fsspec
 from TTS.utils.samplers import BucketBatchSampler
@@ -347,17 +346,17 @@ class OVArgs(Coqpit):
     hidden_channels: int = 192
     hidden_channels_ffn: int = 768
     filter_channels: int = 2
-    n_heads: int
-    n_layers: int
-    kernel_size: int
-    p_dropout: int
-    resblock: int
-    resblock_kernel_sizes: int
-    resblock_dilation_sizes: int
-    upsample_rates: int
-    upsample_initial_channel: int
-    upsample_kernel_sizes: int
-    gin_channels: int
+    n_heads: int = 2
+    n_layers: int = 6
+    kernel_size: int = 3
+    p_dropout: int = 0.1
+    resblock: int = "1"
+    resblock_kernel_sizes: List[int] = [3, 7, 11]
+    resblock_dilation_sizes: List[List[int]] = [[1, 3, 5], [1, 3, 5], [1, 3, 5]]
+    upsample_rates: List[int] = [8, 8, 2, 2]
+    upsample_initial_channel: int = 512
+    upsample_kernel_sizes: List[int] = [16, 16, 4, 4]
+    gin_channels: int = 256
     num_chars: int = 100
 
 
@@ -468,13 +467,17 @@ class ReferenceEncoder(nn.Module):
             L = (L - kernel_size + 2 * pad) // stride + 1
         return L
 
-class OpenVoice(BaseVC):
+
+class OpenVoice(BaseTTS):
     """
     Synthesizer for Training
     """
 
-    def __init__(self, config: Coqpit, speaker_manager: SpeakerManager = None):
-        super().__init__(config, None, speaker_manager, None)
+    def __init__(self, config: Coqpit,
+                 ap: "AudioProcessor" = None,
+                 tokenizer: "TTSTokenizer" = None,
+                 speaker_manager: SpeakerManager = None):
+        super().__init__(config, ap, tokenizer, speaker_manager)
         self.init_multispeaker(config)
 
         self.spec_segment_size = self.args.spec_segment_size
@@ -573,11 +576,10 @@ class OpenVoice(BaseVC):
     def inference(self, y_src, y_src_lengths, y_tgt, tau=1.0):
         g_src = self.ref_enc(y_src)
         g_tgt = self.ref_enc(y_tgt)
-        z, m_q, logs_q, y_mask = self.enc_q(y_src, y_src_lengths, g=g_src if not self.zero_g else torch.zeros_like(g_src),
-                                            tau=tau)
+        z, m_q, logs_q, y_mask = self.enc_q(y_src, y_src_lengths, g=g_src, tau=tau)
         z_p = self.flow(z, y_mask, g=g_src)
         z_hat = self.flow(z_p, y_mask, g=g_tgt, reverse=True)
-        o_hat = self.dec(z_hat * y_mask, g=g_tgt if not self.zero_g else torch.zeros_like(g_tgt))
+        o_hat = self.dec(z_hat * y_mask, g=g_tgt)
         return o_hat, y_mask, (z, z_p, z_hat)
 
     @property
@@ -711,10 +713,24 @@ class OpenVoice(BaseVC):
         figures, audios = self._log(self.ap, batch, outputs, "eval")
         logger.eval_figures(steps, figures)
         logger.eval_audios(steps, audios, self.ap.sample_rate)
-    
+
     @torch.no_grad()
     def test_run(self, assets):
-
+        test_audios = {}
+        print("Cloning test audio ...")
+        ac = self.config.audio
+        for idx in range(self.config.num_test_samples):
+            src_path = self.config.test_samples[idx]["src"]
+            tgt_path = self.config.test_samples[idx]["tgt"]
+            src_wav, _ = load_audio(src_path).unsqueeze(0)
+            tgt_wav, _ = load_audio(tgt_path).unsqueeze(0)
+            src_spec = wav_to_spec(src_wav, ac.fft_size, ac.hop_length, ac.win_length, center=False)
+            tgt_spec = wav_to_spec(tgt_wav, ac.fft_size, ac.hop_length, ac.win_length, center=False)
+            src_spec_lens = src_spec.shape[2]
+            out_wav, _, _ = self.inference(src_spec, src_spec_lens, tgt_spec)
+            out_wav = out_wav[0].cpu().numpy()
+            test_audios["{}-audio".format(idx)] = out_wav
+        return {"audios": test_audios}
 
     def get_criterion(self):
         from TTS.tts.layers.losses import OVGeneratorLoss, OVDiscriminatorLoss
@@ -1065,3 +1081,53 @@ class OpenVoice(BaseVC):
             input_params,
         )
         return audio[0][0]
+
+
+class OVCharacters(BaseCharacters):
+    """Characters class for VITs model for compatibility with pre-trained models"""
+
+    def __init__(
+        self,
+        graphemes: str = _vi_characters,
+        punctuations: str = _punctuations,
+        pad: str = _pad,
+        ipa_characters: str = None,
+    ) -> None:
+        if ipa_characters is not None:
+            graphemes += ipa_characters
+        super().__init__(graphemes, punctuations, pad, None, None, "<BLNK>", is_unique=False, is_sorted=True)
+
+    def _create_vocab(self):
+        self._vocab = [self._pad] + list(self._punctuations) + list(self._characters) + [self._blank]
+        self._char_to_id = {char: idx for idx, char in enumerate(self.vocab)}
+        # pylint: disable=unnecessary-comprehension
+        self._id_to_char = {idx: char for idx, char in enumerate(self.vocab)}
+
+    @staticmethod
+    def init_from_config(config: Coqpit):
+        if config.characters is not None:
+            _pad = config.characters["pad"]
+            _punctuations = config.characters["punctuations"]
+            _letters = config.characters["characters"]
+            _letters_ipa = config.characters["phonemes"]
+            return (
+                OVCharacters(graphemes=_letters, ipa_characters=_letters_ipa, punctuations=_punctuations, pad=_pad),
+                config,
+            )
+        characters = OVCharacters()
+        new_config = replace(config, characters=characters.to_config())
+        return characters, new_config
+
+    def to_config(self) -> "CharactersConfig":
+        return CharactersConfig(
+            characters=self._characters,
+            punctuations=self._punctuations,
+            pad=self._pad,
+            eos=None,
+            bos=None,
+            blank=self._blank,
+            is_unique=False,
+            is_sorted=True,
+        )
+
+
