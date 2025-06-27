@@ -1,9 +1,9 @@
 #! /bin/bash
 
 
-dataset_path=/data/vivoice
-meta_file_train=transcripts.txt
-formatter=vivoice
+dataset_path=/data/tts/female
+meta_file_train=metadata.csv
+formatter=ns_female
 batch_size=12
 epochs=1500
 continue_path=

@@ -1249,8 +1249,8 @@ class OVGeneratorLoss(nn.Module):
         self.gen_loss_alpha = c.gen_loss_alpha
         self.feat_loss_alpha = c.feat_loss_alpha
         self.mel_loss_alpha = c.mel_loss_alpha
-        self.dur_loss_alpha = c.dur_loss_alpha
-        self.spk_encoder_loss_alpha = c.speaker_encoder_loss_alpha
+        # self.dur_loss_alpha = c.dur_loss_alpha
+        # self.spk_encoder_loss_alpha = c.speaker_encoder_loss_alpha
         self.stft = TorchSTFT(
             c.audio.fft_size,
             c.audio.hop_length,

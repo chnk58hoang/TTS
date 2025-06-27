@@ -39,6 +39,10 @@ from TTS.vc.modules.freevc import modules as modules
 from torch.nn.utils.parametrizations import weight_norm
 
 
+hann_window = {}
+mel_basis = {}
+
+
 @torch.no_grad()
 def weights_reset(m: nn.Module):
     # check if the current module has reset_parameters and if it is reset the weight
@@ -224,6 +228,7 @@ def get_attribute_balancer_weights(items: list, attr_name: str, multi_dict: dict
     )
 
 
+@dataclass
 class OVAudioConfig(Coqpit):
     fft_size: int = 1024
     sample_rate: int = 22050
@@ -341,8 +346,8 @@ class OVDataset(TTSDataset):
 @dataclass
 class OVArgs(Coqpit):
     spec_segment_size: int = 32
-    spec_channels: int = 80
-    inter_channels: int = 1
+    spec_channels: int = 513
+    inter_channels: int = 192
     hidden_channels: int = 192
     hidden_channels_ffn: int = 768
     filter_channels: int = 2
@@ -358,6 +363,10 @@ class OVArgs(Coqpit):
     upsample_kernel_sizes: List[int] = field(default_factory=lambda: [16, 16, 4, 4])
     gin_channels: int = 256
     num_chars: int = 100
+    num_spks: int = 0
+    periods_multi_period_discriminator: List[int] = field(default_factory=lambda: [2, 3, 5, 7, 11])
+    use_spectral_norm_disriminator: bool = False
+    encoder_sample_rate: int = None
 
 
 class PosteriorEncoder(nn.Module):
@@ -442,7 +451,7 @@ class ReferenceEncoder(nn.Module):
 
     def forward(self, inputs, mask=None):
         N = inputs.size(0)
-
+        print(inputs.size())
         out = inputs.view(N, 1, -1, self.spec_channels)  # [N, 1, Ty, n_freqs]
         if self.layernorm is not None:
             out = self.layernorm(out)
@@ -460,7 +469,7 @@ class ReferenceEncoder(nn.Module):
         self.gru.flatten_parameters()
         memory, out = self.gru(out)  # out --- [1, N, 128]
 
-        return self.proj(out.squeeze(0))
+        return self.proj(out.squeeze(0)).unsqueeze(-1)
 
     def calculate_channels(self, L, kernel_size, stride, pad, n_convs):
         for i in range(n_convs):
@@ -507,7 +516,7 @@ class OpenVoice(BaseTTS):
                                          num_layers=self.n_layers,
                                          kernel_size=self.kernel_size,
                                          dropout_p=self.p_dropout,
-                                         language_emb_dim=self.gin_channels)
+                                         language_emb_dim=None)
 
         self.dec = Generator(initial_channel=self.inter_channels,
                              resblock=self.resblock,
@@ -527,7 +536,7 @@ class OpenVoice(BaseTTS):
             gin_channels=self.gin_channels,
         )
 
-        self.flow = ResidualCouplingBlock(self.inter_channels, self.hidden_channels, 5, 1, 4, gin_channels=gin_channels)
+        self.flow = ResidualCouplingBlock(self.inter_channels, self.hidden_channels, 5, 1, 4, gin_channels=self.gin_channels)
 
         self.ref_enc = ReferenceEncoder(self.spec_channels, self.gin_channels)
         self.disc = VitsDiscriminator(periods=self.args.periods_multi_period_discriminator,
@@ -551,8 +560,8 @@ class OpenVoice(BaseTTS):
         z_q, m_q, logs_q, y_mask = self.enc_q(y, y_lengths)
         z_slice_q, q_slice_idx = rand_segments(z_q, y_lengths, self.spec_segment_size)
         gt_waveform_seg = segment(gt_waveform,
-                                  q_slice_idx * self.config.audio_hop_length,
-                                  self.spec_segment_size * self.config.audio_hop_length,
+                                  q_slice_idx * self.config.audio.hop_length,
+                                  self.spec_segment_size * self.config.audio.hop_length,
                                   pad_short=True)
         output_wave = self.dec(z_slice_q)
         z_p = self.flow(z_q, y_mask, g=src)
@@ -662,7 +671,7 @@ class OpenVoice(BaseTTS):
                     feats_disc_fake=feats_disc_fake,
                     feats_disc_real=feats_disc_real,
                     z_p=self.model_outputs_cache['z_p'],
-                    logs_p=self.model_outputs_cache['logs_p'],
+                    logs_q=self.model_outputs_cache['logs_q'],
                     m_p_aligned=self.model_outputs_cache['m_p_aligned'],
                     logs_p_aligned=self.model_outputs_cache['logs_p_aligned']
                 )
