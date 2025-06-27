@@ -451,7 +451,6 @@ class ReferenceEncoder(nn.Module):
 
     def forward(self, inputs, mask=None):
         N = inputs.size(0)
-        print(inputs.size())
         out = inputs.view(N, 1, -1, self.spec_channels)  # [N, 1, Ty, n_freqs]
         if self.layernorm is not None:
             out = self.layernorm(out)
@@ -728,15 +727,17 @@ class OpenVoice(BaseTTS):
         test_audios = {}
         print("Cloning test audio ...")
         ac = self.config.audio
+        print(len(self.config.test_samples))
         for idx in range(len(self.config.test_samples)):
             src_path = self.config.test_samples[idx]["src"]
             tgt_path = self.config.test_samples[idx]["tgt"]
-            src_wav, _ = load_audio(src_path).unsqueeze(0)
-            tgt_wav, _ = load_audio(tgt_path).unsqueeze(0)
+            src_wav = load_audio(src_path)[0].unsqueeze(0).to(self.device)
+            tgt_wav = load_audio(tgt_path)[0].unsqueeze(0).to(self.device)
             src_spec = wav_to_spec(src_wav, ac.fft_size, ac.hop_length, ac.win_length, center=False)
             tgt_spec = wav_to_spec(tgt_wav, ac.fft_size, ac.hop_length, ac.win_length, center=False)
-            src_spec_lens = src_spec.shape[2]
+            src_spec_lens = torch.LongTensor(src_spec.shape[2]).to(self.device)
             out_wav, _, _ = self.inference(src_spec, src_spec_lens, tgt_spec)
+            torch.cuda.empty_cache()
             out_wav = out_wav[0].cpu().numpy()
             test_audios["{}-source_audio".format(idx)] = src_wav[0].cpu().numpy()
             test_audios["{}-ref_audio".format(idx)] = tgt_wav[0].cpu().numpy()

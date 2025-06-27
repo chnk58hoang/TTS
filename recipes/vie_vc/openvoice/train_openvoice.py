@@ -94,7 +94,7 @@ def main(args):
     model = OpenVoice(model_config, audio_processor, tokenizer, speaker_manager=None)
     if args.pretrain_path:
         print(f"Loading pre-trained model from {args.pretrain_path}")
-        model.load_checkpoint(checkpoint_path=args.pretrain_path, strict=False)
+        model.load_checkpoint(config=None, checkpoint_path=args.pretrain_path, strict=False)
     trainer = Trainer(
         TrainerArgs(continue_path=args.continue_path,
                     restore_path=args.restore_path,

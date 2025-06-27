@@ -4,12 +4,12 @@
 dataset_path=/data/tts/female
 meta_file_train=metadata.csv
 formatter=ns_female
-batch_size=12
+batch_size=32
 epochs=1500
 continue_path=
-output_path=/TTS/recipes/vivoice/naturalspeech/models/"${formatter}"
-test_dir=/data/tts/101_speakers
-checkpoint_path=
+output_path=/TTS/recipes/vie_vc/openvoice/models/"${formatter}"
+test_dir=/data/tts/101_speaker/wavs
+checkpoint_path=/TTS/checkpoints/checkpoint.pth
 dict_phonemes_json=/TTS/TTS/tts/utils/text/vietnamese/dict_phoneme.json
 gpu=0
 accum=1
@@ -23,7 +23,7 @@ python train_openvoice.py \
     --restore_path "${continue_path}" \
     --output_path "${output_path}" \
     --test_dir "${test_dir}" \
-    --checkpoint_path "${checkpoint_path}" \
+    --pretrain_path "${checkpoint_path}" \
     --dict_phonemes_json "${dict_phonemes_json}" \
     --gpu "${gpu}" \
     --accum "${accum}"
