@@ -3,7 +3,7 @@ import os
 from dataclasses import dataclass, field, replace
 from itertools import chain
 from typing import Dict, List, Tuple, Union
-
+from tqdm import tqdm
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -727,8 +727,8 @@ class OpenVoice(BaseTTS):
         test_audios = {}
         print("Cloning test audio ...")
         ac = self.config.audio
-        print(len(self.config.test_samples))
-        for idx in range(len(self.config.test_samples)):
+        num_test_samples = len(self.config.test_samples)
+        for idx in tqdm(range(num_test_samples), total=num_test_samples):
             src_path = self.config.test_samples[idx]["src"]
             tgt_path = self.config.test_samples[idx]["tgt"]
             src_wav = load_audio(src_path)[0].unsqueeze(0)
