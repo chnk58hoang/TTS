@@ -735,7 +735,7 @@ class OpenVoice(BaseTTS):
             tgt_wav = load_audio(tgt_path)[0].unsqueeze(0)
             src_spec = wav_to_spec(src_wav, ac.fft_size, ac.hop_length, ac.win_length, center=False).to(self.device)
             tgt_spec = wav_to_spec(tgt_wav, ac.fft_size, ac.hop_length, ac.win_length, center=False).to(self.device)
-            src_spec_lens = torch.LongTensor(src_spec.shape[2]).to(self.device)
+            src_spec_lens = torch.tensor([src_spec.shape[2]], dtype=torch.long).to(self.device)
             out_wav, _, _ = self.inference(src_spec, src_spec_lens, tgt_spec)
             torch.cuda.empty_cache()
             out_wav = out_wav[0].cpu().numpy()
