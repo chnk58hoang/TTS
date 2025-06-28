@@ -721,3 +721,17 @@ def vivoice(root_path, meta_file, **kwargs):  # pylint: disable=unused-argument
             if regex.fullmatch(r'\p{L}+( \p{L}+)*', text):
                 items.append({"text": text.lower(), "audio_file": wav_path, "speaker_name": speaker_name, "root_path": root_path})
     return items
+
+
+def vccorp_vc(root_path, meta_file, **kwargs):
+    txt_file = os.path.join(root_path, meta_file)
+    items = []
+    speaker_name = "vccorp"
+    with open(txt_file, "r", encoding="utf-8") as ttf:
+        for line in ttf:
+            cols = line.split("|")
+            wav_path = cols[0].strip()
+            wav_path = wav_path.replace("/data/raw/train/voice_clone", root_path)
+            text = cols[1]
+            items.append({"text": text.lower(), "audio_file": wav_path, "speaker_name": speaker_name, "root_path": root_path})    
+    return items

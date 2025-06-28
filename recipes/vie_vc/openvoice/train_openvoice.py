@@ -47,7 +47,7 @@ def main(args):
                                        language='vi',
                                        path=args.dataset_path)
     # Audio config
-    audio_config = OVAudioConfig(sample_rate=22050,
+    audio_config = OVAudioConfig(sample_rate=args.sr,
                                  win_length=1024,
                                  hop_length=256,
                                  num_mels=80,
@@ -118,6 +118,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
     parser.add_argument("--accum", type=int, default=1, help="Gradient accumulation steps")
     parser.add_argument("--eval_batch_size", type=int, default=16, help="Batch size for evaluation")
+    parser.add_argument("--sr", type=int, default=16000, help="Audio sampling rate")
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate for training")
     parser.add_argument("--batch_group_size", type=int, default=16,
                         help="Batch group size for training")
