@@ -21,7 +21,7 @@ def main(args):
                                        path=args.dataset_path)
 
     # Audio config
-    audio_config = Vits2AudioConfig(sample_rate=16000,
+    audio_config = Vits2AudioConfig(sample_rate=args.sr,
                                     win_length=1024,
                                     hop_length=256,
                                     num_mels=80,
@@ -92,6 +92,7 @@ if __name__ == "__main__":
                         default='metadata.txt', help="Path to the meta file for training")
     parser.add_argument("--formatter", type=str, default="ns_female", help="dataset formatter")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
+    parser.add_argument("--sr", type=int, default=16000, help="audio sr")
     parser.add_argument("--accum", type=int, default=1, help="Gradient accumulation steps")
     parser.add_argument("--eval_batch_size", type=int, default=16, help="Batch size for evaluation")
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate for training")

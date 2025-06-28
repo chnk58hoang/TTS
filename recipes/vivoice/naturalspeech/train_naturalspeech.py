@@ -28,7 +28,7 @@ def get_configs(args):
                                        path=args.dataset_path)
 
     # Audio config
-    audio_config = NaturalSpeechAudioConfig(sample_rate=16000,
+    audio_config = NaturalSpeechAudioConfig(sample_rate=args.sr,
                                             win_length=1024,
                                             hop_length=256,
                                             num_mels=80,
@@ -160,6 +160,7 @@ if __name__ == "__main__":
                         default='metadata.txt', help="Path to the meta file for training")
     parser.add_argument("--formatter", type=str, default="ns_female", help="dataset formatter")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
+    parser.add_argument("--sr", type=int, default=16000, help="audio sr")
     parser.add_argument("--eval_batch_size", type=int, default=16, help="Batch size for evaluation")
     parser.add_argument("--batch_group_size", type=int, default=16,
                         help="Batch group size for training")
