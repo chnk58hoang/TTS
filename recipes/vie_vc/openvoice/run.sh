@@ -1,11 +1,11 @@
 #! /bin/bash
 
 
-dataset_path=/data/tts/female
-meta_file_train=metadata.csv
-formatter=ns_female
+dataset_path=/data/vivoice/
+meta_file_train=transcripts.txt
+formatter=vivoice
 batch_size=32
-epochs=1500
+epochs=100
 continue_path=
 output_path=/TTS/recipes/vie_vc/openvoice/models/"${formatter}"
 test_dir=/data/tts/101_speaker/wavs
