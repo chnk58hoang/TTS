@@ -731,10 +731,10 @@ class OpenVoice(BaseTTS):
         for idx in range(len(self.config.test_samples)):
             src_path = self.config.test_samples[idx]["src"]
             tgt_path = self.config.test_samples[idx]["tgt"]
-            src_wav = load_audio(src_path)[0].unsqueeze(0).to(self.device)
-            tgt_wav = load_audio(tgt_path)[0].unsqueeze(0).to(self.device)
-            src_spec = wav_to_spec(src_wav, ac.fft_size, ac.hop_length, ac.win_length, center=False)
-            tgt_spec = wav_to_spec(tgt_wav, ac.fft_size, ac.hop_length, ac.win_length, center=False)
+            src_wav = load_audio(src_path)[0].unsqueeze(0)
+            tgt_wav = load_audio(tgt_path)[0].unsqueeze(0)
+            src_spec = wav_to_spec(src_wav, ac.fft_size, ac.hop_length, ac.win_length, center=False).to(self.device)
+            tgt_spec = wav_to_spec(tgt_wav, ac.fft_size, ac.hop_length, ac.win_length, center=False).to(self.device)
             src_spec_lens = torch.LongTensor(src_spec.shape[2]).to(self.device)
             out_wav, _, _ = self.inference(src_spec, src_spec_lens, tgt_spec)
             torch.cuda.empty_cache()
@@ -743,6 +743,11 @@ class OpenVoice(BaseTTS):
             test_audios["{}-ref_audio".format(idx)] = tgt_wav[0].cpu().numpy()
             test_audios["{}-cloned_audio".format(idx)] = out_wav
         return {"audios": test_audios}
+    
+    def test_log(
+        self, outputs: dict, logger: "Logger", assets: dict, steps: int  # pylint: disable=unused-argument
+    ) -> None:
+        logger.test_audios(steps, outputs["audios"], self.ap.sample_rate)
 
     def get_criterion(self):
         from TTS.tts.layers.losses import OVGeneratorLoss, OVDiscriminatorLoss
