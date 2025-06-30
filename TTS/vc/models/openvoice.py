@@ -581,7 +581,7 @@ class OpenVoice(BaseTTS):
         return output
 
     @torch.no_grad()
-    def inference(self, y_src, y_src_lengths, y_tgt, tau=1.0):
+    def inference(self, y_src, y_src_lengths, y_tgt, tau=0.3):
         g_src = self.ref_enc(y_src)
         g_tgt = self.ref_enc(y_tgt)
         z, m_q, logs_q, y_mask = self.enc_q(y_src, y_src_lengths, g=g_src, tau=tau)
@@ -737,8 +737,7 @@ class OpenVoice(BaseTTS):
             tgt_spec = wav_to_spec(tgt_wav, ac.fft_size, ac.hop_length, ac.win_length, center=False).to(self.device)
             src_spec_lens = torch.tensor([src_spec.shape[2]], dtype=torch.long).to(self.device)
             out_wav, _, _ = self.inference(src_spec, src_spec_lens, tgt_spec)
-            torch.cuda.empty_cache()
-            out_wav = out_wav[0].cpu().numpy()
+            out_wav = out_wav[0][0, 0].data.cpu().float().numpy()
             test_audios["{}-source_audio".format(idx)] = src_wav[0].cpu().numpy()
             test_audios["{}-ref_audio".format(idx)] = tgt_wav[0].cpu().numpy()
             test_audios["{}-cloned_audio".format(idx)] = out_wav
