@@ -315,6 +315,41 @@ def condition_time_mask(
     return mask
 
 
+def condition_time_mask_suffix(
+    features_lens: torch.Tensor,
+    mask_percent: Tuple[float, float],
+    max_len: int = 0,
+) -> torch.Tensor:
+    """
+    Apply Time masking, mask from the end time index.
+    Args:
+        features_lens:
+            input tensor of shape ``(B)``
+        mask_size:
+            the width size for masking.
+        max_len:
+            the maximum length of the mask.
+    Returns:
+        Return a 2-D bool tensor (B, T), where masked positions
+        are filled with `True` and non-masked positions are
+        filled with `False`.
+    """
+    mask_size = (
+        torch.zeros_like(features_lens, dtype=torch.float32).uniform_(*mask_percent)
+        * features_lens
+    ).to(torch.int64)
+    mask_starts = (
+        torch.ones_like(mask_size, dtype=torch.float32) * (features_lens - mask_size)
+    ).to(torch.int64)
+    mask_ends = mask_starts + mask_size
+    max_len = max(max_len, features_lens.max())
+    seq_range = torch.arange(0, max_len, device=features_lens.device)
+    mask = (seq_range[None, :] >= mask_starts[:, None]) & (
+        seq_range[None, :] < mask_ends[:, None]
+    )
+    return mask
+
+
 def make_pad_mask(lengths: torch.Tensor, max_len: int = 0) -> torch.Tensor:
     """
     Args:
